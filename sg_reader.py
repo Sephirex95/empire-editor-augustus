@@ -93,29 +93,40 @@ class SgFileReader:
             self.bitmaps.append(SgBitmapRecord(stream))
 
     def _load_images(self, stream: io.BytesIO, include_alpha: bool):
-        _ = SgImageRecord(stream, include_alpha)  # skip dummy
-        for _ in range(self.header.num_image_records):
+        for _ in range(self.header.num_image_records + 1):  # include possible dummy
             self.images.append(SgImageRecord(stream, include_alpha))
 
     def _find_555_file(self, bitmap_record: SgBitmapRecord, is_external: bool) -> Optional[bytes]:
-        name = bitmap_record.filename if is_external else self.sg_filename
-        basename = os.path.splitext(os.path.basename(name))[0] + ".555"
-
-        for path in [
-            os.path.join(self.base_path, basename),
-            os.path.join(self.base_path, '555', basename)
-        ]:
-            if os.path.exists(path):
-                with open(path, 'rb') as f:
+        expected_name = bitmap_record.filename if is_external else self.base_name
+        target_basename = os.path.splitext(os.path.basename(expected_name))[0] + ".555"
+        
+        search_paths = [
+            self.base_path,
+            os.path.join(self.base_path, "555")
+        ]
+        
+        # Try direct paths first (case-sensitive)
+        for base_dir in search_paths:
+            exact_path = os.path.join(base_dir, target_basename)
+            if os.path.exists(exact_path):
+                with open(exact_path, "rb") as f:
                     return f.read()
-
+        
         # Case-insensitive fallback
-        for root, _, files in os.walk(self.base_path):
-            for f in files:
-                if f.lower() == basename.lower():
-                    with open(os.path.join(root, f), 'rb') as file:
-                        return file.read()
+        for base_dir in search_paths:
+            if not os.path.isdir(base_dir):
+                continue  # Skip if not a valid dir
+            for root, _, files in os.walk(base_dir):
+                for fname in files:
+                    if fname.lower() == target_basename.lower():
+                        found_path = os.path.join(root, fname)
+                        print(f"[INFO] Found .555 file (case-insensitive): {found_path}")
+                        with open(found_path, "rb") as f:
+                            return f.read()
+    
+        print(f"[WARN] Could not find .555 file for: {bitmap_record.filename} (external={is_external})")
         return None
+
 
     def _get_555_data(self, bitmap_record: SgBitmapRecord, is_external: bool) -> Optional[bytes]:
         key = f"{bitmap_record.filename}_{is_external}"
@@ -167,9 +178,57 @@ class SgFileReader:
 
         if record.type in [0, 1, 10, 12, 13]:
             return self._load_plain_image(buffer, record)
+        elif record.type in [256, 257, 276]:
+            return self._load_sprite_image(buffer, record)
 
+        else:
+            print(f"Unknown record type: {record.type}, skipping image with offset {record.offset}")
+            return None
         # Add handling for other types here if needed
         return None
+    
+    def _load_sprite_image(self, buffer: bytes, record: SgImageRecord) -> Optional[Image.Image]:
+        width, height = record.width, record.height
+        image = np.zeros((height, width, 4), dtype=np.uint8)
+        x = y = i = 0
+        length = record.length
+    
+        try:
+            while i < length:
+                c = buffer[i]
+                i += 1
+    
+                if c == 255:
+                    skip = buffer[i]
+                    i += 1
+                    x += skip
+                    while x >= width:
+                        x -= width
+                        y += 1
+                else:
+                    for _ in range(c):
+                        if i + 1 >= length:
+                            break  # Prevent overflow
+                        pixel = buffer[i] | (buffer[i + 1] << 8)
+                        i += 2
+                        r = ((pixel >> 10) & 0x1F) << 3
+                        g = ((pixel >> 5) & 0x1F) << 3
+                        b = (pixel & 0x1F) << 3
+                        # Improve brightness (duplicate high bits into low bits)
+                        r |= (r >> 5)
+                        g |= (g >> 5)
+                        b |= (b >> 5)
+                        a = 0 if pixel == 0xf81f else 255
+                        if 0 <= x < width and 0 <= y < height:
+                            image[y, x] = [r, g, b, a]
+                        x += 1
+                        if x >= width:
+                            x = 0
+                            y += 1
+            return Image.fromarray(image, mode='RGBA')
+        except Exception as e:
+            print(f"[ERROR] Failed to decode sprite image (type 256/257/276): {e}")
+            return None
 
     def _convert_images_to_pil(self) -> Dict[str, List[Image.Image]]:
         result: Dict[str, List[Image.Image]] = {}
@@ -177,6 +236,7 @@ class SgFileReader:
         for img_record in self.images:
             bitmap_id = img_record.bitmap_id
             if bitmap_id >= len(self.bitmaps):
+                print(f"Warning: Invalid bitmap_id {bitmap_id}, max allowed is {len(self.bitmaps)-1}")
                 continue
 
             bitmap = self.bitmaps[bitmap_id]

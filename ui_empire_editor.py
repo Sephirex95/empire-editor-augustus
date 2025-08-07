@@ -1,10 +1,8 @@
-# ui_empire_editor.py
-
-from PySide6.QtCore import Qt, QCoreApplication, QRect, QMetaObject
+from PySide6.QtCore import Qt, QCoreApplication, QMetaObject
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QListWidget, QGraphicsView,
-    QMenuBar, QMenu, QStatusBar
+    QMainWindow, QWidget, QListWidget, QGraphicsView,
+    QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout
 )
 
 
@@ -13,60 +11,63 @@ class Ui_MainWindow(object):
         if not MainWindow.objectName():
             MainWindow.setObjectName("MainWindow")
         MainWindow.resize(1920, 931)
-        MainWindow.setMinimumWidth(1400)
-
+        MainWindow.setMinimumWidth(900)  # 400 + 400 + some room
+    
         # Actions
         self.actionOpen = QAction(MainWindow)
-        self.actionOpen.setObjectName("actionOpen")
         self.actionSave = QAction(MainWindow)
-        self.actionSave.setObjectName("actionSave")
         self.actionSelect_background_Image = QAction(MainWindow)
-        self.actionSelect_background_Image.setObjectName("actionSelect_background_Image")
-
+    
         # Central widget
         self.centralwidget = QWidget(MainWindow)
-        self.centralwidget.setObjectName("centralwidget")
-
-        # Sidebar list
-        self.listWidget = QListWidget(self.centralwidget)
-        self.listWidget.setObjectName("listWidget")
-        self.listWidget.setGeometry(QRect(1520, 21, 375, 751))
-        self.listWidget.setMinimumWidth(400)
-        self.listWidget.setDragEnabled(True)
-        self.listWidget.setSelectionMode(QListWidget.SingleSelection)
-        self.listWidget.setDefaultDropAction(Qt.MoveAction)
-
-        # Graphics view (placeholder — will be replaced)
-        self.graphicsView = QGraphicsView(self.centralwidget)
-        self.graphicsView.setObjectName("graphicsView")
-        self.graphicsView.setGeometry(QRect(25, 21, 1531, 751))
-
         MainWindow.setCentralWidget(self.centralwidget)
-
-        # Menus
+    
+        # Layout
+        layout = QHBoxLayout(self.centralwidget)
+        layout.setContentsMargins(10, 10, 10, 10)
+    
+        # Splitter
+        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(splitter)
+    
+        # Graphics view setup
+        self.graphicsView = QGraphicsView()
+        self.graphicsView.setMinimumWidth(400)
+        splitter.addWidget(self.graphicsView)
+    
+        # Sidebar setup
+        self.listWidget = QListWidget()
+        self.listWidget.setMinimumWidth(400)
+        self.listWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.listWidget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.listWidget.setWordWrap(True)
+        self.listWidget.setUniformItemSizes(False)
+        self.listWidget.setTextElideMode(Qt.ElideNone)  # Don’t cut off text
+        splitter.addWidget(self.listWidget)
+    
+        # Clamp sidebar width and set initial layout proportions
+        splitter.setCollapsible(0, False)  # Don't allow graphicsView to be collapsed
+        splitter.setCollapsible(1, False)  # Don't allow sidebar to collapse
+        splitter.setSizes([MainWindow.width() - 400, 400])  # Default width for sidebar
+    
+        # Menu bar and status bar
         self.menubar = QMenuBar(MainWindow)
-        self.menubar.setObjectName("menubar")
-        self.menubar.setGeometry(QRect(0, 0, 1915, 25))
         self.menuEmpire_editor_augustus = QMenu(self.menubar)
-        self.menuEmpire_editor_augustus.setObjectName("menuEmpire_editor_augustus")
         self.menuMap_Settings = QMenu(self.menubar)
-        self.menuMap_Settings.setObjectName("menuMap_Settings")
         MainWindow.setMenuBar(self.menubar)
-
-        # Status bar
         self.statusbar = QStatusBar(MainWindow)
-        self.statusbar.setObjectName("statusbar")
         MainWindow.setStatusBar(self.statusbar)
-
-        # Add menu items
-        self.menubar.addAction(self.menuEmpire_editor_augustus.menuAction())
-        self.menubar.addAction(self.menuMap_Settings.menuAction())
+    
+        # Build menu
         self.menuEmpire_editor_augustus.addAction(self.actionOpen)
         self.menuEmpire_editor_augustus.addAction(self.actionSave)
         self.menuMap_Settings.addAction(self.actionSelect_background_Image)
-
+        self.menubar.addAction(self.menuEmpire_editor_augustus.menuAction())
+        self.menubar.addAction(self.menuMap_Settings.menuAction())
+    
         self.retranslateUi(MainWindow)
         QMetaObject.connectSlotsByName(MainWindow)
+
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "MainWindow", None))
