@@ -1,9 +1,30 @@
+#ui_empire_editor.py
 from PySide6.QtCore import Qt, QCoreApplication, QMetaObject
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QListWidget, QGraphicsView,
-    QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout
+    QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout, QLabel
 )
+
+class EmpireMapView(QGraphicsView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)  # no label updates here
+
+    # def mouseMoveEvent(self, event):
+    #     """
+    #     Track the mouse movement and update the status bar with the mouse position relative to the graphics view.
+    #     """
+    #     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())  # Get local position in view
+    #     if self.rect().contains(local_pos):  # Ensure it's within the view
+    #         # Get the MainWindow reference and update the mouse position label
+    #         main_window = self.window()  # This will get the top-level window, which is MainWindow
+    #         main_window.ui.mouse_position_label.setText(f"Mouse Position: ({local_pos.x()}, {local_pos.y()})")
+        
+    #     # Call the base class implementation for normal mouse move behavior
+    #     super().mouseMoveEvent(event)
 
 
 class Ui_MainWindow(object):
@@ -17,7 +38,10 @@ class Ui_MainWindow(object):
         self.actionOpen = QAction(MainWindow)
         self.actionSave = QAction(MainWindow)
         self.actionSelect_background_Image = QAction(MainWindow)
-    
+        
+        # Add the "Default Empire Map" action
+        self.actionDefaultEmpireMap = QAction(MainWindow)
+
         # Central widget
         self.centralwidget = QWidget(MainWindow)
         MainWindow.setCentralWidget(self.centralwidget)
@@ -31,7 +55,7 @@ class Ui_MainWindow(object):
         layout.addWidget(splitter)
     
         # Graphics view setup
-        self.graphicsView = QGraphicsView()
+        self.graphicsView = EmpireMapView()
         self.graphicsView.setMinimumWidth(400)
         splitter.addWidget(self.graphicsView)
     
@@ -58,16 +82,26 @@ class Ui_MainWindow(object):
         self.statusbar = QStatusBar(MainWindow)
         MainWindow.setStatusBar(self.statusbar)
     
+        # Add label to the status bar for mouse position
+        self.mouse_position_label = QLabel("Mouse Position: (0, 0)")
+        self.mouse_position_label.setObjectName("mousePositionLabel")
+        self.statusbar.addWidget(self.mouse_position_label)  # left side
+
+
         # Build menu
         self.menuEmpire_editor_augustus.addAction(self.actionOpen)
         self.menuEmpire_editor_augustus.addAction(self.actionSave)
         self.menuMap_Settings.addAction(self.actionSelect_background_Image)
+        self.menuMap_Settings.addAction(self.actionDefaultEmpireMap)  # Add new action here
         self.menubar.addAction(self.menuEmpire_editor_augustus.menuAction())
         self.menubar.addAction(self.menuMap_Settings.menuAction())
     
+        # Connect the new action to the method that handles it
+        self.actionDefaultEmpireMap.triggered.connect(MainWindow.on_default_empire_map_selected)
+
+        # Re-translate the UI elements (for localization)
         self.retranslateUi(MainWindow)
         QMetaObject.connectSlotsByName(MainWindow)
-
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "MainWindow", None))
@@ -76,3 +110,7 @@ class Ui_MainWindow(object):
         self.actionSelect_background_Image.setText(QCoreApplication.translate("MainWindow", "Select background Image", None))
         self.menuEmpire_editor_augustus.setTitle(QCoreApplication.translate("MainWindow", "File", None))
         self.menuMap_Settings.setTitle(QCoreApplication.translate("MainWindow", "Map Settings", None))
+        
+        # Set text for the new "Default Empire Map" action
+        self.actionDefaultEmpireMap.setText(QCoreApplication.translate("MainWindow", "Default Empire Map", None))
+

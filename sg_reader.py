@@ -1,7 +1,7 @@
 import os
 import struct
 import io
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set, Mapping
 from PIL import Image
 import numpy as np
 
@@ -42,6 +42,7 @@ class SgBitmapRecord:
 
 
 class SgHeader:
+
     def __init__(self, stream: io.BytesIO):
         self.sg_filesize = struct.unpack('<I', stream.read(4))[0]
         self.version = struct.unpack('<I', stream.read(4))[0]
@@ -57,6 +58,7 @@ class SgHeader:
 
 
 class SgFileReader:
+    _KEEP_ALL = object()  # private sentinel
     def __init__(self, sg_filename: str):
         self.sg_filename = sg_filename
         self.base_path = os.path.dirname(sg_filename)
@@ -66,8 +68,8 @@ class SgFileReader:
         self.images: List[SgImageRecord] = []
         self._555_files: Dict[str, bytes] = {}
 
+
     def load(self) -> Dict[str, List[Image.Image]]:
-        """Load SG file and return dictionary of bitmap name -> list of PIL Images."""
         with open(self.sg_filename, 'rb') as f:
             stream = io.BytesIO(f.read())
 
@@ -78,8 +80,59 @@ class SgFileReader:
         include_alpha = self.header.version >= 0xd6
         self._load_images(stream, include_alpha)
 
-        return self._convert_images_to_pil()
+        return self._convert_images_to_pil(selection=None)
 
+    def load_filtered(self, *specs, free_after: bool = True) -> Dict[str, List[Image.Image]]:
+        """
+        Varargs selection:
+          - "empire_bits"                  -> keep all indices for that name
+          - ("The_empire", 0)              -> keep index 0 only
+          - ("empire_panels", [1,2,3])     -> keep specific indices
+          - ("empire_bits", "*") or (...)  -> keep all indices
+        """
+        with open(self.sg_filename, 'rb') as f:
+            stream = io.BytesIO(f.read())
+
+        self.header = SgHeader(stream)
+        self._load_bitmaps(stream)
+        stream.seek(680 + self._max_bitmap_records() * 200)
+
+        include_alpha = self.header.version >= 0xd6
+        self._load_images(stream, include_alpha)
+
+        selection = self._build_selection(specs)
+        out = self._convert_images_to_pil(selection=selection)
+
+        if free_after:
+            self.images.clear()
+            self.bitmaps.clear()
+            self._555_files.clear()
+            self.header = None
+
+        return out
+
+    def _build_selection(self, specs):
+        """
+        Returns dict: { name -> _KEEP_ALL or set(indices) }
+        """
+        sel = {}
+        for spec in specs:
+            if isinstance(spec, str):
+                name = spec
+                sel[name] = self._KEEP_ALL
+            elif isinstance(spec, tuple) and len(spec) == 2:
+                name, which = spec
+                if which in ("*", Ellipsis):
+                    sel[name] = self._KEEP_ALL
+                elif isinstance(which, int):
+                    sel.setdefault(name, set()).add(which)
+                elif isinstance(which, (list, tuple, set)):
+                    sel.setdefault(name, set()).update(int(i) for i in which)
+                else:
+                    raise ValueError(f"Bad selection for {name}: {which!r}")
+            else:
+                raise ValueError(f"Bad spec: {spec!r}")
+        return sel
     def _max_bitmap_records(self) -> int:
         if self.header.version == 0xcf:
             return 50
@@ -230,20 +283,37 @@ class SgFileReader:
             print(f"[ERROR] Failed to decode sprite image (type 256/257/276): {e}")
             return None
 
-    def _convert_images_to_pil(self) -> Dict[str, List[Image.Image]]:
+    def _convert_images_to_pil(self, selection=None) -> Dict[str, List[Image.Image]]:
         result: Dict[str, List[Image.Image]] = {}
-
+        index_per_name: Dict[str, int] = {}
+    
         for img_record in self.images:
             bitmap_id = img_record.bitmap_id
             if bitmap_id >= len(self.bitmaps):
                 print(f"Warning: Invalid bitmap_id {bitmap_id}, max allowed is {len(self.bitmaps)-1}")
                 continue
-
+    
             bitmap = self.bitmaps[bitmap_id]
-            name = os.path.splitext(bitmap.filename)[0] or f"bitmap_{bitmap_id}"
-
+            # normalize to basename without extension
+            name = os.path.splitext(os.path.basename(bitmap.filename))[0] or f"bitmap_{bitmap_id}"
+            idx = index_per_name.get(name, 0)
+    
+            # selection check BEFORE decoding
+            if selection is not None:
+                rule = selection.get(name)
+                if rule is None:
+                    index_per_name[name] = idx + 1
+                    continue
+                if rule is not self._KEEP_ALL and idx not in rule:
+                    index_per_name[name] = idx + 1
+                    continue
+    
             img = self._load_image_data(img_record, bitmap)
             if img:
                 result.setdefault(name, []).append(img)
-
+    
+            index_per_name[name] = idx + 1
+    
         return result
+
+

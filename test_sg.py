@@ -8,7 +8,8 @@ Created on Thu Aug  7 14:51:03 2025
 from sg_reader import SgFileReader
 
 reader = SgFileReader(r"Z:\C3_vanilla\C3_github_aug\C3.sg2")
-images = reader.load()
+
+images = reader.load_filtered("The_empire", "empire_bits", "empire_panels")
 
 print ("loaded")
 # Display or save images
