@@ -1,15 +1,12 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Jul 18 10:29:50 2025
-
-@author: sephirex95
-"""
-
 # main_window.py
-from PySide6.QtWidgets import QMainWindow, QFileDialog, QGraphicsScene, QGraphicsPixmapItem, QGraphicsView, QApplication
+
+import sys
+from PySide6.QtWidgets import (
+    QMainWindow, QFileDialog, QGraphicsScene, QGraphicsPixmapItem, QApplication
+)
 from PySide6.QtGui import QPixmap
 from ui_empire_editor import Ui_MainWindow
-import sys
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -17,14 +14,16 @@ class MainWindow(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
 
-        # Init scene
+        # ✅ Set up a basic QGraphicsScene
         self.scene = QGraphicsScene(self)
         self.ui.graphicsView.setScene(self.scene)
+        self.ui.graphicsView.setDragMode(self.ui.graphicsView.DragMode.ScrollHandDrag)
 
-        # Hook up actions
+        # ✅ Add example items to the sidebar
+        self.ui.listWidget.addItems(["House", "Tree", "Soldier"])
+
+        # ✅ Hook up background image loader
         self.ui.actionSelect_background_Image.triggered.connect(self.load_background_image)
-        
-        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
     def load_background_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -32,21 +31,24 @@ class MainWindow(QMainWindow):
         )
         if file_path:
             pixmap = QPixmap(file_path)
+
+            # Clear current scene and add background
             self.scene.clear()
             self.scene.addItem(QGraphicsPixmapItem(pixmap))
             self.scene.setSceneRect(pixmap.rect())
 
     def closeEvent(self, event):
-        """Ensure QApplication exits completely when window is closed."""
         QApplication.quit()
         event.accept()
 
 
 if __name__ == "__main__":
+    from PySide6.QtWidgets import QApplication
     app = QApplication.instance()
-    if app is None: #spyder debugging hack
-        app = QApplication(sys.argv) 
-    widget = MainWindow()
-    widget.show()
+    if not app:
+        app = QApplication([])
+
+    window = MainWindow()
+    window.show()
     sys.exit(app.exec())
-    app.quit()
+

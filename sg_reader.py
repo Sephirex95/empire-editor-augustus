@@ -1,7 +1,7 @@
 import os
 import struct
 import io
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from PIL import Image
 import numpy as np
 
