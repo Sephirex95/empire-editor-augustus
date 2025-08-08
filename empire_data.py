@@ -1,90 +1,212 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List
-
-# Empire class holds the overall empire data
-@dataclass
-class Empire:
-    version: str = "1"  # Version of the empire
-    show_ireland: str = "true"  # Whether to show Ireland
-    ornament: 'Ornament' = field(default_factory=lambda: Ornament())  # Ornament data (type)
-    border: 'Border' = field(default_factory=lambda: Border())  # Border data (density and edges)
-    cities: List['City'] = field(default_factory=list)  # List of cities in the empire
-    invasion_paths: List['InvasionPath'] = field(default_factory=list)  # Paths for invasion
-    distant_battle_paths: List['DistantBattlePath'] = field(default_factory=list)  # Distant battle paths
+from enum import Enum
+from typing import List, Optional
 
 
-# Ornament data (just the type for now)
+# ---------- Enums map 1:1 to XML attribute values ----------
+
+class OrnamentType(str, Enum):
+    STONEHENGE = "The Stonehenge"
+    GALLIC_WHEAT = "Gallic Wheat"
+    THE_PYRENEES = "The Pyrenees"
+    IBERIAN_AQUEDUCT = "Iberian Aqueduct"
+    TRIUMPHAL_ARCH = "Triumphal Arch"
+    WEST_DESERT_WHEAT = "West Desert Wheat"
+    LIGHTHOUSE_OF_ALEXANDRIA = "Lighthouse of Alexandria"
+    WEST_DESERT_PALMS = "West Desert Palm Trees"
+    TRADE_SHIP = "Trade Ship"
+    WATERSIDE_PALMS = "Waterside Palm Trees"
+    COLOSSEUM = "Colosseum"
+    THE_ALPS = "The Alps"
+    ROMAN_TREE = "Roman Tree"
+    GREEK_MOUNTAIN_RANGE = "Greek Mountain Range"
+    THE_PARTHENON = "The Parthenon"
+    THE_PYRAMIDS = "The Pyramids"
+    THE_HAGIA_SOPHIA = "The Hagia Sophia"
+    EAST_DESERT_PALMS = "East Desert Palm Trees"
+    EAST_DESERT_WHEAT = "East Desert Wheat"
+    TRADE_CAMEL = "Trade Camel"
+
+
+class CityType(str, Enum):
+    OURS = "ours"
+    ROMAN = "roman"
+    DISTANT = "distant"
+    TRADE = "trade"
+    VULNERABLE = "vulnerable"   # distant roman city that can be attacked
+
+
+class TradeRouteType(str, Enum):
+    LAND = "land"
+    SEA = "sea"
+
+
+class ResourceType(str, Enum):
+    WHEAT = "wheat"
+    VEGETABLES = "vegetables"
+    FRUIT = "fruit"
+    OLIVES = "olives"
+    VINES = "vines"
+    MEAT = "meat"
+    FISH = "fish"
+    WINE = "wine"
+    OIL = "oil"
+    IRON = "iron"
+    GOLD = "gold"
+    TIMBER = "timber"   # alias "wood" handled in validation/serializer if you want
+    CLAY = "clay"
+    MARBLE = "marble"
+    WEAPONS = "weapons"
+    FURNITURE = "furniture"
+    POTTERY = "pottery"
+
+
+# ---------- Value objects ----------
+
 @dataclass
 class Ornament:
-    type: str = "all"  # Type of ornament (e.g., "all", "none")
+    """<ornament type="...">"""
+    type: OrnamentType
 
 
-# Border data (holds density and edges)
-@dataclass
-class Border:
-    density: str = "28"  # Border density (strength or thickness)
-    edges: List['Edge'] = field(default_factory=list)  # List of edge points on the border
-
-
-# Edge data (represents a point on the border with x, y coordinates)
 @dataclass
 class Edge:
-    x: int  # x-coordinate of the edge
-    y: int  # y-coordinate of the edge
-    hidden: bool = False  # Whether the edge is hidden
+    """<edge x="" y="" hidden="true|false">"""
+    x: int
+    y: int
+    hidden: bool = False
 
 
-# City data (represents a city with name, coordinates, and resources)
 @dataclass
-class City:
-    name: str  # Name of the city (e.g., "Lugdunum")
-    x: int  # x-coordinate of the city
-    y: int  # y-coordinate of the city
-    city_type: str = ""  # Type of city (e.g., "ours", "roman")
-    sells: List['Resource'] = field(default_factory=list)  # Resources the city sells
-    buys: List['Resource'] = field(default_factory=list)  # Resources the city buys
-    trade_points: List['TradePoint'] = field(default_factory=list)  # List of trade points for the city
+class Border:
+    """<border density=""> <edge/>* </border>"""
+    density: Optional[int] = 50  # defaults to 50 per docs
+    edges: List[Edge] = field(default_factory=list)
 
 
-# Resource data (represents a resource with a type and amount)
 @dataclass
 class Resource:
-    type: str  # Type of resource (e.g., "wheat", "iron")
-    amount: int = 0  # Amount of the resource
+    """<resource type="" amount=""> (amount optional, defaults to 1; ours can omit)"""
+    type: ResourceType
+    amount: Optional[int] = 1  # per docs; for 'ours' can be omitted
+
+    def __post_init__(self):
+        if self.amount is not None and self.amount < 0:
+            raise ValueError("resource.amount cannot be negative")
 
 
-# TradePoint data (represents a trade route point with coordinates)
 @dataclass
 class TradePoint:
-    x: int  # x-coordinate of the trade point
-    y: int  # y-coordinate of the trade point
+    """<point x="" y=""> inside <trade_points>"""
+    x: int
+    y: int
 
 
-# InvasionPath data (represents a series of battles for an invasion)
 @dataclass
-class InvasionPath:
-    battles: List['Battle'] = field(default_factory=list)  # List of battles in the path
+class City:
+    """<city ...> with optional <buys>, <sells>, <trade_points>"""
+    name: str
+    x: int
+    y: int
+    type: CityType = CityType.TRADE
+    trade_route_cost: Optional[int] = 500         # only for trade cities; defaults to 500
+    trade_route_type: TradeRouteType = TradeRouteType.LAND
+    buys: List[Resource] = field(default_factory=list)
+    sells: List[Resource] = field(default_factory=list)
+    trade_points: List[TradePoint] = field(default_factory=list)
+
+    def __post_init__(self):
+        # If it's our city, <sells> list is required to define what we can produce.
+        if self.type == CityType.OURS and not self.sells:
+            # Keep it soft: you may prefer to just allow empty and validate later during export.
+            pass
+        # For non-trade cities, trade route attributes are irrelevant; leave as-is or clear on export.
 
 
-# Battle data (represents a battle with x, y coordinates)
 @dataclass
 class Battle:
-    x: int  # x-coordinate of the battle
-    y: int  # y-coordinate of the battle
+    """<battle x="" y="">"""
+    x: int
+    y: int
 
 
-# DistantBattlePath data (represents a distant battle with waypoints)
 @dataclass
-class DistantBattlePath:
-    path_type: str  # Type of the path (e.g., "roman", "enemy")
-    start_x: int  # Starting x-coordinate
-    start_y: int  # Starting y-coordinate
-    waypoints: List['Waypoint'] = field(default_factory=list)  # List of waypoints along the path
+class InvasionPath:
+    """<path> <battle/>* </path> inside <invasion_paths>"""
+    battles: List[Battle] = field(default_factory=list)
 
 
-# Waypoint data (represents a waypoint in a distant battle path)
 @dataclass
 class Waypoint:
-    num_months: int  # Number of months to reach the waypoint
-    x: int  # x-coordinate of the waypoint
-    y: int  # y-coordinate of the waypoint
+    """<waypoint num_months="" x="" y="">"""
+    num_months: int
+    x: int
+    y: int
+
+    def __post_init__(self):
+        if self.num_months <= 0:
+            raise ValueError("waypoint.num_months must be > 0")
+
+
+class DistantPathType(str, Enum):
+    ROMAN = "roman"
+    ENEMY = "enemy"
+
+
+@dataclass
+class DistantBattlePath:
+    """
+    <path type="roman|enemy" start_x="" start_y="">
+        <waypoint num_months="" x="" y=""/>
+        ...
+    </path>
+    """
+    type: DistantPathType
+    start_x: int
+    start_y: int
+    waypoints: List[Waypoint] = field(default_factory=list)
+
+
+# ---------- Root ----------
+
+@dataclass
+class Empire:
+    """
+    <empire version="1">
+        <ornament .../>*
+        <border density=""><edge .../>*</border> (optional)
+        <cities><city .../>*</cities>
+        <invasion_paths><path>...</path>*</invasion_paths> (optional)
+        <distant_battle_paths><path ...>...</path>*</distant_battle_paths> (optional)
+    </empire>
+    """
+    version: str = "1"
+    ornaments: List[Ornament] = field(default_factory=list)
+    border: Optional[Border] = None
+    cities: List[City] = field(default_factory=list)
+    invasion_paths: List[InvasionPath] = field(default_factory=list)
+    distant_battle_paths: List[DistantBattlePath] = field(default_factory=list)
+
+    # --- convenience helpers (optional) ---
+
+    def add_city(self,
+                 name: str,
+                 x: int,
+                 y: int,
+                 type: CityType = CityType.TRADE,
+                 trade_route_cost: Optional[int] = 500,
+                 trade_route_type: TradeRouteType = TradeRouteType.LAND) -> City:
+        c = City(
+            name=name, x=x, y=y,
+            type=type,
+            trade_route_cost=trade_route_cost,
+            trade_route_type=trade_route_type
+        )
+        self.cities.append(c)
+        return c
+
+    def ensure_border(self) -> Border:
+        if self.border is None:
+            self.border = Border()
+        return self.border
