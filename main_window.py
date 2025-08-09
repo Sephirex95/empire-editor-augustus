@@ -13,11 +13,17 @@ import empire_data as ed
 
 from enum import Enum, auto
 
-class EmpireObjectsList(Enum):
-    OUR_CITY = auto()
-    ENEMY_CITY = auto()
-    TRADE_CITY = auto()
+# ---------------------------------------------
+# New, separated enums
+# ---------------------------------------------
+class EmpCityTypes(Enum):
+    OUR = auto()
+    DISTANT = auto()
+    TRADE = auto()
+
+class EmpObjTypes(Enum):
     EMPIRE_EDGE = auto()
+# ---------------------------------------------
 
 
 class ProgramState:
@@ -81,11 +87,12 @@ class ProgramState:
     def create_selectable_elements(self):
         try:
             bits = self.images["empire_bits"]
+            # NOTE: "kind" now holds a value from EmpCityTypes OR EmpObjTypes.
             self.elements = [
-                {"name": "Our City",      "pil": bits[0],  "kind": EmpireObjectsList.OUR_CITY},
-                {"name": "Roman City",    "pil": bits[7],  "kind": EmpireObjectsList.TRADE_CITY},
-                {"name": "Far away city", "pil": bits[21], "kind": EmpireObjectsList.ENEMY_CITY},
-                {"name": "Empire edge",   "pil": bits[71], "kind": EmpireObjectsList.EMPIRE_EDGE},
+                {"name": "Our City",      "pil": bits[0],  "kind": EmpCityTypes.OUR},
+                {"name": "Roman City",    "pil": bits[7],  "kind": EmpCityTypes.TRADE},
+                {"name": "Far away city", "pil": bits[21], "kind": EmpCityTypes.DISTANT},
+                {"name": "Empire edge",   "pil": bits[71], "kind": EmpObjTypes.EMPIRE_EDGE},
             ]
         except (KeyError, IndexError):
             self.init_failed = True
@@ -169,6 +176,7 @@ class MainWindow(QMainWindow):
 
         # Drag handling
         self.selected_item = None
+        self.selected_kind = None        # can be EmpCityTypes or EmpObjTypes
         self.current_icon = None
         self.is_dragging = False
 
@@ -207,11 +215,9 @@ class MainWindow(QMainWindow):
 
 
             # If showing a floating preview label, keep it under the cursor (optional)
-            # in eventFilter, MouseMove branch
             if self.is_dragging and self.current_icon is not None:
                 local = self.mapFromGlobal(gp)
                 self.current_icon.move(local)   # <- no half-width/height offset
-
 
             # Never consume move events
             return False
@@ -247,7 +253,6 @@ class MainWindow(QMainWindow):
                     self.pending_drop_pixmap = None
                     return False
 
-
         # Optional: right-click to deselect even when not "dragging"
         if et == QEvent.MouseButtonPress and hasattr(event, "button") and event.button() == Qt.RightButton:
             if self.selected_item:
@@ -270,7 +275,7 @@ class MainWindow(QMainWindow):
 
     def select_item(self, item):
         self.selected_item = item
-        self.selected_kind = item.data(Qt.UserRole)
+        self.selected_kind = item.data(Qt.UserRole)  # EmpCityTypes or EmpObjTypes
         pixmap = item.icon().pixmap(self.ui.listWidget.iconSize())
         self.ui.graphicsView.setInteractive(False)
 
@@ -299,27 +304,42 @@ class MainWindow(QMainWindow):
         self.reset_cursor()
         self.ui.graphicsView.setInteractive(True)
 
-
         self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)  # not ScrollHandDrag
-
     
         # FIX: also clear the QListWidget’s selection so it’s not visually highlighted
         self.ui.listWidget.clearSelection()
         self._apply_interactivity_to_all(True)
 
-    # ---------- DROP HANDLER ----------
-    def handle_icon_drop(self, scene_pos):
+    # ---------- ROUTER ----------
+    def drop_object(self, scene_pos):
+        """
+        Decide which handler to call based on selected_kind.
+        City kinds -> handle_city_drop
+        Object kinds -> dedicated handler (e.g., handle_drop_empire_edge)
+        """
         kind = getattr(self, "selected_kind", None)
         if kind is None:
             return
-        
-        if kind == EmpireObjectsList.OUR_CITY:
-            self.handle_drop_city(scene_pos)
-        elif kind == EmpireObjectsList.EMPIRE_EDGE:
-            self.handle_drop_empire_edge(scene_pos)
-        else:
-            print(f"No handler for kind: {kind}")
 
+        # City types
+        if isinstance(kind, EmpCityTypes):
+            self.handle_city_drop(scene_pos)
+            return
+
+        # Object types
+        if isinstance(kind, EmpObjTypes):
+            if kind == EmpObjTypes.EMPIRE_EDGE:
+                self.handle_drop_empire_edge(scene_pos)
+            else:
+                print(f"No handler for object kind: {kind}")
+            return
+
+        print(f"Unknown kind: {kind}")
+
+    # ---------- DROP HANDLER ----------
+    def handle_icon_drop(self, scene_pos):
+        # Unified entry point now
+        self.drop_object(scene_pos)
 
     def add_city_icons_to_list(self):
         self.ui.listWidget.clear()
@@ -327,7 +347,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(el["name"])
             item.setIcon(QIcon(self.pil_to_qpixmap(el["pil"])))
             item.setSizeHint(QSize(100, 80))
-            item.setData(Qt.UserRole, el["kind"])   # store the enum directly
+            item.setData(Qt.UserRole, el["kind"])   # store the enum directly (EmpCityTypes or EmpObjTypes)
             self.ui.listWidget.addItem(item)
         self.ui.listWidget.setIconSize(QSize(64, 64))
 
@@ -354,6 +374,19 @@ class MainWindow(QMainWindow):
         if 0 <= x < pm.width() and 0 <= y < pm.height():
             return x, y
         return None
+    
+    def _citytype_and_name_for_kind(self, kind):
+        # kind is EmpCityTypes
+        if kind == EmpCityTypes.OUR:
+            return ed.CityType.OURS, "Our City"
+        elif kind == EmpCityTypes.TRADE:
+            # handle possible naming differences in your model
+            trade_type = getattr(ed.CityType, "TRADE", None) or getattr(ed.CityType, "ROMAN", None)
+            return trade_type, "Roman City"
+        elif kind == EmpCityTypes.DISTANT:
+            return getattr(ed.CityType, "DISTANT", None), "Far away city"
+        else:
+            return None, "City"
 
     def _pixmap_for_city(self, city) -> QPixmap:
         size = self.ui.listWidget.iconSize()
@@ -370,23 +403,23 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # 2) Fallback by city.type -> EmpireObjectsList kind
+        # 2) Fallback by city.type -> EmpCityTypes kind
         kind = None
         ct = getattr(city, "type", None)
         try:
             if ct == ed.CityType.OURS:
-                kind = EmpireObjectsList.OUR_CITY
+                kind = EmpCityTypes.OUR
             elif hasattr(ed.CityType, "TRADE") and ct == ed.CityType.TRADE:
-                kind = EmpireObjectsList.TRADE_CITY
-            elif hasattr(ed.CityType, "ENEMY") and ct == ed.CityType.ENEMY:
-                kind = EmpireObjectsList.ENEMY_CITY
+                kind = EmpCityTypes.TRADE
+            elif hasattr(ed.CityType, "DISTANT") and ct == ed.CityType.DISTANT:
+                kind = EmpCityTypes.DISTANT
         except Exception:
             kind = None
 
         # Find matching element
         if kind is None and self.state.elements:
             # last resort: default to first element ("Our City")
-            kind = self.state.elements[0]["kind"]
+            kind = EmpCityTypes.OUR
 
         for el in getattr(self.state, "elements", []):
             if el["kind"] == kind:
@@ -425,6 +458,7 @@ class MainWindow(QMainWindow):
     
         # Apply current interactivity state (pointer on hover only when not dragging)
         self._apply_item_interactivity(item, enable=not self.is_dragging)
+
     def _apply_item_interactivity(self, item, enable: bool):
         item.setAcceptHoverEvents(enable)
         item.setCursor(Qt.PointingHandCursor if enable else Qt.ArrowCursor)
@@ -432,7 +466,6 @@ class MainWindow(QMainWindow):
     def _apply_interactivity_to_all(self, enable: bool):
         for it in self.city_items.values():
             self._apply_item_interactivity(it, enable)
-
 
     def _remove_city_marker(self, city):
         """Remove the scene item for this city, if it exists."""
@@ -468,7 +501,6 @@ class MainWindow(QMainWindow):
         y = (vp.height() - br.height()) / 2
         self.no_bg_item.setPos(view.mapToScene(int(x), int(y)))
 
-            
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.center_no_background_message()  # now harmless if item was deleted
@@ -515,7 +547,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        
     def on_default_empire_map_selected(self):
         if "The_empire" in self.state.images:
             empire_image = self.state.images["The_empire"]
@@ -557,7 +588,6 @@ class MainWindow(QMainWindow):
         self.ui.graphicsView.setEnabled(True)
         self.remove_no_background_message()
 
-            
     def _ensure_new_empire_for_new_background(self) -> bool:
         """
         Returns True if it's OK to proceed (new empire created or none existed).
@@ -587,45 +617,79 @@ class MainWindow(QMainWindow):
         if empire and city in empire.cities:
             empire.cities.remove(city)
         self._remove_city_marker(city)
-        if self.selected_item and self.selected_item.data(Qt.UserRole) == EmpireObjectsList.OUR_CITY:
+        # updated enum check
+        if self.selected_item and self.selected_item.data(Qt.UserRole) == EmpCityTypes.OUR:
             self.deselect_item()
-            
-    def handle_drop_city(self, scene_pos):
+
+    # -------------------------------------------------------
+    # New "city" drop handler (generalized), keeps old name too
+    # -------------------------------------------------------
+    def handle_city_drop(self, scene_pos):
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
             QMessageBox.warning(self, "No background", "Drop onto the background image area.", QMessageBox.Ok)
             return
         x, y = xy
-    
+
+        kind = getattr(self, "selected_kind", None)  # EmpCityTypes.*
+        if kind is None or not isinstance(kind, EmpCityTypes):
+            return
+
         # Ensure there's an empire
         if not self.state.check_if_empire():
             self.state.new_empire()
         empire = self.state.current_empire_object
-    
-        # Do we already have an 'ours' city?
-        has_ours, ours = self.state.has_our_city()
-        # in handle_drop_city, for moving:
-        if has_ours:
-            resp = QMessageBox.question(
-                self,
-                "Move Our City?",
-                f"Move 'Our City' from ({ours.x}, {ours.y}) to ({x}, {y})?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if resp == QMessageBox.No:
-                return
-            # Move only: remove marker, update coords, re-place marker
-            self._remove_city_marker(ours)
-            ours.x, ours.y = x, y
-            self._place_city_marker(ours, x, y)
 
-        else:
-            # Create it fresh
+        # OUR city: single instance with move-confirmation
+        if kind == EmpCityTypes.OUR:
+            has_ours, ours = self.state.has_our_city()
+            if has_ours:
+                resp = QMessageBox.question(
+                    self,
+                    "Move Our City?",
+                    f"Move 'Our City' from ({ours.x}, {ours.y}) to ({x}, {y})?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if resp == QMessageBox.No:
+                    return
+                self._remove_city_marker(ours)
+                ours.x, ours.y = x, y
+                self._place_city_marker(ours, x, y)
+                return
+
             ours = ed.City(name="Our City", x=x, y=y, type=ed.CityType.OURS, sells=[])
             empire.cities.append(ours)
             self._place_city_marker(ours, x, y)
+            return
 
+        # Other city types: create freely
+        ctype, default_name = self._citytype_and_name_for_kind(kind)
+        if ctype is None:
+            return
+        city = ed.City(name=default_name, x=x, y=y, type=ctype, sells=[])
+        empire.cities.append(city)
+        self._place_city_marker(city, x, y)
+
+    # Back-compat: keep the original name, delegate to new method
+    def handle_drop_city(self, scene_pos):
+        self.handle_city_drop(scene_pos)
+
+    # -------------------------------------------------------
+    # Non-city handler(s)
+    # -------------------------------------------------------
+    def handle_drop_empire_edge(self, scene_pos):
+        """
+        Placeholder for EMPIRE_EDGE object drop logic.
+        Keep the function (it was referenced) and implement later as needed.
+        """
+        # For now, just notify position - hook your real edge building logic here.
+        xy = self._scene_to_image_xy(scene_pos)
+        if xy is None:
+            QMessageBox.warning(self, "No background", "Drop onto the background image area.", QMessageBox.Ok)
+            return
+        x, y = xy
+        QMessageBox.information(self, "Empire Edge", f"Empire edge drop at ({x}, {y}).", QMessageBox.Ok)
 
     def closeEvent(self, event):
         QApplication.quit()
