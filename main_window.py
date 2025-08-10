@@ -13,6 +13,7 @@ from sg_reader import SgFileReader
 from ui_empire_editor import Ui_MainWindow
 # top of main_window.py (with your other imports)
 import empire_data as ed
+import edit_city_dialog as emp_dlg
 from math import hypot
 from enum import Enum, auto
 
@@ -234,7 +235,7 @@ class MainWindow(QMainWindow):
 
     def _init_context_menus(self):
         city_common_menu = [
-            ("Properties", self._placeholder_function),
+            ("Properties", lambda it: self._edit_city(it.data(1))),
             ("Delete City", self._placeholder_function),
             ("Move City", self._placeholder_function),
         ]
@@ -613,6 +614,18 @@ class MainWindow(QMainWindow):
     def _placeholder_function(self):
         print("joke's on you, this does nothing")
 # %% Everything else    
+    def _edit_city(self, city_obj):
+        dlg = emp_dlg.EmpireCityDialog(city_obj, self)
+        if dlg.exec() == QDialog.Accepted:
+            # re-render marker if visuals depend on type/resources
+            key = id(city_obj)
+            if key in self.city_items:
+                it = self.city_items[key]
+                # update icon if type changed
+                pm = self._pixmap_for_city(city_obj)
+                it.setPixmap(pm)
+
+
     def _begin_edge_drawing(self, x_img: int, y_img: int):
         self._edge_clear_scene_items()
         self.edge_points_img = []

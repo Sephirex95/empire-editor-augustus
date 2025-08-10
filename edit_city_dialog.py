@@ -1,116 +1,160 @@
-#edit_city_dialog.py
 # -*- coding: utf-8 -*-
 """
-Created on Sun Aug 10 01:59:23 2025
+Refactored City Editor Dialog (PySide6)
+- Uses dataclasses and enums from `empire_data` instead of redefining constants
+- Fixes buggy checkbox behavior by using native checkable QTableWidgetItems
+- Prevents sticky selections by disabling selection on the table
+- Enables/disables amount spinboxes in sync with check state
+- Streamlined load/save logic directly to/from the data classes
+- Fixed-size dialog: size can be provided in the constructor or defaults to sizeHint
 
-@author: sephirex95
+Drop-in replacement for the previous `edit_city_dialog.py`.
 """
+from __future__ import annotations
 
-# ========== City Editor Dialog ==========
+from typing import Iterable, Optional
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QSpinBox, QComboBox, QPushButton, QLabel,
-    QWidget, QStackedWidget, QTableWidget, QTableWidgetItem, QCheckBox
+    QWidget, QStackedWidget, QTableWidget, QTableWidgetItem
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot
 
-RESOURCES = [
-    "wheat","vegetables","fruit","olives","vines","meat","fish","wine","oil",
-    "iron","gold","timber","wood","clay","marble","weapons","furniture","pottery"
-]
+# ---- Import canonical data model & enums ----
+from empire_data import (
+    City, CityType, TradeRouteType,
+    Resource, ResourceType,
+)
 
-# Map between editor type names and your model enum/values
-CITY_TYPE_CHOICES = [
-    ("ours",      "OURS"),
-    ("trade",     "TRADE"),     # default
-    ("roman",     "ROMAN"),     # distant roman, non-trade
-    ("distant",   "DISTANT"),   # foreign, non-trade
-    ("vulnerable","VULNERABLE") # distant roman, attackable
-]
+# Resource display order comes from the enum declaration in empire_data.ResourceType
+RESOURCE_NAMES: list[str] = [rt.value for rt in ResourceType]
+CITY_TYPE_LABELS: list[str] = [ct.value for ct in CityType]   # ['ours','roman','distant','trade','vulnerable']
+ROUTE_TYPE_LABELS: list[str] = [tt.value for tt in TradeRouteType]  # ['land','sea']
 
+
+# -------- Resource Table ----------------------------------------------------
 class ResourceTable(QTableWidget):
+    """Two-column table: [Enabled ✓]  [Amount].
+
+    - Checkable items in column 0 (native QTableWidgetItem checkboxes)
+    - QSpinBox editors in column 1
+    - When `show_amounts` is False, the amount column is hidden and disabled.
+    - Works directly with `empire_data.Resource` objects.
     """
-    Two-column (Enabled, Amount) table of resources.
-    For 'ours' cities, call set_amounts_visible(False) to hide the amount column.
-    """
-    def __init__(self, show_amounts=True, parent=None):
-        super().__init__(len(RESOURCES), 2, parent)
-        self.setHorizontalHeaderLabels(["", "Amount"])
+
+    def __init__(self, show_amounts: bool = True, parent: Optional[QWidget] = None):
+        super().__init__(len(RESOURCE_NAMES), 2, parent)
+        self._block = False  # reentrancy guard for itemChanged
+        self._show_amounts = show_amounts
+
+        self.setHorizontalHeaderLabels(["", "Amount"]) 
         self.verticalHeader().setVisible(False)
         self.setShowGrid(False)
         self.setAlternatingRowColors(True)
-        self.setAmountColumnVisible(show_amounts)
+        self.setSelectionMode(QTableWidget.NoSelection)  # avoid sticky selections
+        self.setFocusPolicy(Qt.StrongFocus)
 
-        for row, name in enumerate(RESOURCES):
-            # checkbox with resource name as item text (for accessibility/tooltips)
-            cb = QCheckBox(name)
-            cb.setTristate(False)
-            cb.setToolTip(name)
-            self.setCellWidget(row, 0, cb)
+        for row, name in enumerate(RESOURCE_NAMES):
+            # Column 0: Name with checkbox
+            item = QTableWidgetItem(name)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setToolTip(name)
+            self.setItem(row, 0, item)
 
-            sp = QSpinBox()
+            # Column 1: Amount spinbox (as editor widget)
+            sp = QSpinBox(self)
             sp.setRange(1, 999)
             sp.setValue(1)
+            sp.setEnabled(show_amounts)
             self.setCellWidget(row, 1, sp)
 
+        # Hide amount column if requested
+        self.setAmountColumnVisible(show_amounts)
+
+        # React to user toggles
+        self.itemChanged.connect(self._on_item_changed)
+
         self.resizeColumnsToContents()
-        self.setColumnWidth(0, 180)
+        self.setColumnWidth(0, max(140, self.columnWidth(0)))
 
-    def setAmountColumnVisible(self, visible: bool):
+    # --- API ---
+    def setAmountColumnVisible(self, visible: bool) -> None:
+        self._show_amounts = visible
         self.setColumnHidden(1, not visible)
+        # Ensure spinboxes are disabled when hidden
+        for row in range(self.rowCount()):
+            w = self.cellWidget(row, 1)
+            if isinstance(w, QSpinBox):
+                w.setEnabled(visible and self.item(row, 0).checkState() == Qt.Checked)
 
-    def load_from_lists(self, resource_list, has_amounts: bool):
-        """
-        resource_list: list[ (type:str, amount:int|None) ] or list[str]
-        has_amounts=True for trade cities (buys/sells),
-        has_amounts=False for 'ours' sells.
-        """
-        present = {}
-        if resource_list:
-            for entry in resource_list:
-                if isinstance(entry, str):
-                    present[entry] = None
-                else:
-                    rtype = entry.type if hasattr(entry, "type") else entry.get("type")
-                    amount = entry.amount if hasattr(entry, "amount") else entry.get("amount")
-                    present[str(rtype)] = amount
+    def load(self, resources: Optional[Iterable[Resource]], has_amounts: bool) -> None:
+        """Load directly from a list of `Resource` objects (or None)."""
+        present: dict[str, Optional[int]] = {}
+        if resources:
+            for r in resources:
+                try:
+                    rtype = r.type.value if isinstance(r.type, ResourceType) else str(r.type)
+                except Exception:
+                    rtype = str(getattr(r, "type", ""))
+                amt = getattr(r, "amount", None)
+                present[rtype] = None if amt is None else int(amt)
 
-        for row, name in enumerate(RESOURCES):
-            cb = self.cellWidget(row, 0)
-            sp = self.cellWidget(row, 1)
-            if name in present:
-                cb.setChecked(True)
-                if has_amounts and present[name] is not None:
-                    sp.setValue(int(present[name]))
-            else:
-                cb.setChecked(False)
-            sp.setEnabled(has_amounts)
+        self._block = True
+        try:
+            for row, name in enumerate(RESOURCE_NAMES):
+                item = self.item(row, 0)
+                sp = self.cellWidget(row, 1)
+                checked = name in present
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                if isinstance(sp, QSpinBox):
+                    if has_amounts and present.get(name) is not None:
+                        sp.setValue(present[name])
+                    sp.setEnabled(has_amounts and checked and self._show_amounts)
+        finally:
+            self._block = False
 
-    def to_list(self, has_amounts: bool):
-        out = []
-        for row, name in enumerate(RESOURCES):
-            cb = self.cellWidget(row, 0)
-            if not cb.isChecked():
+    def to_resources(self, has_amounts: bool) -> list[Resource]:
+        out: list[Resource] = []
+        for row, name in enumerate(RESOURCE_NAMES):
+            item = self.item(row, 0)
+            if item.checkState() != Qt.Checked:
                 continue
+            amount: Optional[int]
             if has_amounts:
                 sp = self.cellWidget(row, 1)
-                out.append({"type": name, "amount": int(sp.value())})
+                amount = int(sp.value()) if isinstance(sp, QSpinBox) else 1
             else:
-                out.append({"type": name})
+                amount = 1  # amount not stored for ours, but dataclass defaults to 1
+            out.append(Resource(type=ResourceType(name), amount=amount))
         return out
 
+    # --- Slots ---
+    @Slot(QTableWidgetItem)
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._block or item.column() != 0:
+            return
+        # Enable/disable amount editor in same row
+        sp = self.cellWidget(item.row(), 1)
+        if isinstance(sp, QSpinBox):
+            sp.setEnabled(self._show_amounts and item.checkState() == Qt.Checked)
 
+
+# -------- Dialog ------------------------------------------------------------
 class EmpireCityDialog(QDialog):
-    """
-    Drop this class into your codebase. To use:
-        dlg = EmpireCityDialog(city_obj, self)   # parent = MainWindow
+    """City editor dialog bound to `empire_data.City`.
+
+    Usage:
+        dlg = EmpireCityDialog(city_obj, parent=self, fixed_size=(720, 560))
         if dlg.exec() == QDialog.Accepted:
             # city_obj has been updated
     """
-    def __init__(self, city, parent=None):
+
+    def __init__(self, city: City, parent: Optional[QWidget] = None, fixed_size: Optional[tuple[int, int]] = None):
         super().__init__(parent)
+        self.city = city
         self.setWindowTitle("City Properties")
-        self.city = city  # ed.City instance
 
         # --- Layout scaffold
         root = QVBoxLayout(self)
@@ -120,14 +164,11 @@ class EmpireCityDialog(QDialog):
         form = QFormLayout(basics)
 
         self.name_edit = QLineEdit()
-        self.x_spin = QSpinBox()
-        self.y_spin = QSpinBox()
-        for sp in (self.x_spin, self.y_spin):
-            sp.setRange(0, 100000)  # adjust to your map bounds
+        self.x_spin = QSpinBox(); self.x_spin.setRange(0, 100000)
+        self.y_spin = QSpinBox(); self.y_spin.setRange(0, 100000)
 
         self.type_combo = QComboBox()
-        for label, _ in CITY_TYPE_CHOICES:
-            self.type_combo.addItem(label)
+        self.type_combo.addItems(CITY_TYPE_LABELS)
 
         form.addRow("Name", self.name_edit)
         form.addRow("X", self.x_spin)
@@ -138,26 +179,21 @@ class EmpireCityDialog(QDialog):
         self.stack = QStackedWidget()
 
         # Page 0: OURS -> Sells (no amounts)
-        page_ours = QWidget()
-        v0 = QVBoxLayout(page_ours)
+        page_ours = QWidget(); v0 = QVBoxLayout(page_ours)
         sells_box_ours = QGroupBox("What we can produce (sells)")
-        v0f = QVBoxLayout(sells_box_ours)
+        vb0 = QVBoxLayout(sells_box_ours)
         self.sells_ours = ResourceTable(show_amounts=False)
-        v0f.addWidget(self.sells_ours)
+        vb0.addWidget(self.sells_ours)
         v0.addWidget(sells_box_ours)
         v0.addStretch()
 
         # Page 1: TRADE -> route + buys/sells (with amounts)
-        page_trade = QWidget()
-        v1 = QVBoxLayout(page_trade)
+        page_trade = QWidget(); v1 = QVBoxLayout(page_trade)
 
         route_box = QGroupBox("Trade Route")
         route_form = QFormLayout(route_box)
-        self.route_cost = QSpinBox()
-        self.route_cost.setRange(0, 99999)
-        self.route_cost.setValue(500)
-        self.route_type = QComboBox()
-        self.route_type.addItems(["land", "sea"])
+        self.route_cost = QSpinBox(); self.route_cost.setRange(0, 99999); self.route_cost.setValue(500)
+        self.route_type = QComboBox(); self.route_type.addItems(ROUTE_TYPE_LABELS)
         route_form.addRow("Cost", self.route_cost)
         route_form.addRow("Type", self.route_type)
 
@@ -175,13 +211,11 @@ class EmpireCityDialog(QDialog):
         v1.addWidget(buys_box)
         v1.addWidget(sells_box)
 
-        # Page 2: ROMAN/DISTANT/VULNERABLE -> no trading widgets
-        page_other = QWidget()
-        v2 = QVBoxLayout(page_other)
+        # Page 2: Other types (roman/distant/vulnerable)
+        page_other = QWidget(); v2 = QVBoxLayout(page_other)
         v2.addWidget(QLabel("No trading options for this city type."))
         v2.addStretch()
 
-        # add pages in the order we’ll map to
         self.stack.addWidget(page_ours)   # 0
         self.stack.addWidget(page_trade)  # 1
         self.stack.addWidget(page_other)  # 2
@@ -189,10 +223,8 @@ class EmpireCityDialog(QDialog):
         # Buttons
         btns = QHBoxLayout()
         btns.addStretch()
-        ok_btn = QPushButton("OK")
-        cancel_btn = QPushButton("Cancel")
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
+        ok_btn = QPushButton("OK"); ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel"); cancel_btn.clicked.connect(self.reject)
         btns.addWidget(ok_btn)
         btns.addWidget(cancel_btn)
 
@@ -201,123 +233,87 @@ class EmpireCityDialog(QDialog):
         root.addWidget(self.stack)
         root.addLayout(btns)
 
-        # Wire type switching
+        # Behavior
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
 
-        # Load current city into widgets
+        # Load model data
         self._load_from_city()
 
-    # ---------- Data binding ----------
-    def _on_type_changed(self, t: str):
-        if t == "ours":
-            self.stack.setCurrentIndex(0)
-        elif t == "trade":
-            self.stack.setCurrentIndex(1)
+        # Fixed size
+        if fixed_size is not None:
+            self.setFixedSize(*fixed_size)
         else:
-            self.stack.setCurrentIndex(2)
+            self.setFixedSize(self.sizeHint())
 
-    def _model_to_editor_type(self, city_type):
-        # city.type is ed.CityType enum in your model
-        name = getattr(city_type, "name", str(city_type)).upper() if city_type else "TRADE"
-        for label, key in CITY_TYPE_CHOICES:
-            if key == name:
-                return label
-        return "trade"
+    # ----- Type switching -----
+    @Slot(str)
+    def _on_type_changed(self, label: str) -> None:
+        # Map enum value labels to pages
+        idx = 2  # other by default
+        if label == CityType.OURS.value:
+            idx = 0
+        elif label == CityType.TRADE.value:
+            idx = 1
+        self.stack.setCurrentIndex(idx)
 
-    def _editor_to_model_type(self, label: str):
-        # returns a model ed.CityType member by name if it exists
-        for l, key in CITY_TYPE_CHOICES:
-            if l == label:
-                return getattr(type(self.city.type), key, None) or getattr(self._city_type_enum(), key, None)
-        return getattr(self._city_type_enum(), "TRADE", None)
-
-    def _city_type_enum(self):
-        # helper: ed.CityType enum
-        return getattr(__import__("empire_data", fromlist=["CityType"]), "CityType")
-
-    def _load_from_city(self):
+    # ----- Load/Save -----
+    def _load_from_city(self) -> None:
         c = self.city
-        self.name_edit.setText(getattr(c, "name", "") or "")
-        self.x_spin.setValue(int(getattr(c, "x", 0) or 0))
-        self.y_spin.setValue(int(getattr(c, "y", 0) or 0))
-        tlabel = self._model_to_editor_type(getattr(c, "type", None))
+        self.name_edit.setText(c.name or "")
+        self.x_spin.setValue(int(c.x or 0))
+        self.y_spin.setValue(int(c.y or 0))
+
+        # type -> combo
+        tlabel = c.type.value if isinstance(c.type, CityType) else str(c.type)
+        if tlabel not in CITY_TYPE_LABELS:
+            tlabel = CityType.TRADE.value
         self.type_combo.setCurrentText(tlabel)
         self._on_type_changed(tlabel)
 
-        # route / buys / sells:
-        # Build simple lists from your model structure (adapt if your model differs)
-        def to_list(objs):
-            out = []
-            for o in (objs or []):
-                typ = getattr(o, "type", None)
-                amt = getattr(o, "amount", None)
-                if typ is None:
-                    continue
-                out.append({"type": str(typ), "amount": amt})
-            return out
+        if tlabel == CityType.OURS.value:
+            self.sells_ours.load(c.sells, has_amounts=False)
+        elif tlabel == CityType.TRADE.value:
+            # route
+            self.route_cost.setValue(int(c.trade_route_cost or 500))
+            route_label = c.trade_route_type.value if isinstance(c.trade_route_type, TradeRouteType) else str(c.trade_route_type)
+            if route_label not in ROUTE_TYPE_LABELS:
+                route_label = TradeRouteType.LAND.value
+            self.route_type.setCurrentText(route_label)
+            # resources
+            self.buys_trade.load(c.buys, has_amounts=True)
+            self.sells_trade.load(c.sells, has_amounts=True)
 
-        if tlabel == "ours":
-            self.sells_ours.load_from_lists(to_list(getattr(c, "sells", [])), has_amounts=False)
-
-        elif tlabel == "trade":
-            self.route_cost.setValue(int(getattr(c, "trade_route_cost", 500) or 500))
-            self.route_type.setCurrentText(str(getattr(c, "trade_route_type", "land") or "land"))
-            self.buys_trade.load_from_lists(to_list(getattr(c, "buys", [])), has_amounts=True)
-            self.sells_trade.load_from_lists(to_list(getattr(c, "sells", [])), has_amounts=True)
-
-    def accept(self):
-        # write back to model
+    # ----- Write back -----
+    def accept(self) -> None:  # noqa: D401
         c = self.city
         c.name = self.name_edit.text().strip()
         c.x = int(self.x_spin.value())
         c.y = int(self.y_spin.value())
 
         # type
-        model_type = self._editor_to_model_type(self.type_combo.currentText())
-        if model_type is not None:
-            c.type = model_type
+        current_label = self.type_combo.currentText()
+        try:
+            c.type = CityType(current_label)
+        except ValueError:
+            c.type = CityType.TRADE
 
-        # route / resources based on type
-        tlabel = self.type_combo.currentText()
-        if tlabel == "ours":
-            # sells required; amounts not needed
-            sells_list = self.sells_ours.to_list(has_amounts=False)
-            c.sells = [self._mk_res(o["type"], None) for o in sells_list]
-
-            # clear trade-only fields
+        if c.type == CityType.OURS:
+            c.sells = self.sells_ours.to_resources(has_amounts=False)
             c.buys = []
             c.trade_route_cost = None
-            c.trade_route_type = None
-
-        elif tlabel == "trade":
+            c.trade_route_type = TradeRouteType.LAND
+        elif c.type == CityType.TRADE:
             c.trade_route_cost = int(self.route_cost.value())
-            c.trade_route_type = self.route_type.currentText()
-
-            buys_list = self.buys_trade.to_list(has_amounts=True)
-            sells_list = self.sells_trade.to_list(has_amounts=True)
-            c.buys  = [self._mk_res(o["type"], o["amount"]) for o in buys_list]
-            c.sells = [self._mk_res(o["type"], o["amount"]) for o in sells_list]
-
+            try:
+                c.trade_route_type = TradeRouteType(self.route_type.currentText())
+            except ValueError:
+                c.trade_route_type = TradeRouteType.LAND
+            c.buys = self.buys_trade.to_resources(has_amounts=True)
+            c.sells = self.sells_trade.to_resources(has_amounts=True)
         else:
-            # roman / distant / vulnerable → no trade
             c.buys = []
             c.sells = []
             c.trade_route_cost = None
-            c.trade_route_type = None
+            c.trade_route_type = TradeRouteType.LAND
 
         super().accept()
-
-    def _mk_res(self, rtype: str, amount: int | None):
-        """
-        Create a resource entry matching your model. Adjust to your dataclass/structure.
-        """
-        # If ed.Resource exists as a dataclass (type, amount)
-        try:
-            from empire_data import Resource
-            return Resource(type=rtype, amount=amount if amount is not None else 1)
-        except Exception:
-            # Fallback: simple object with attrs
-            o = type("Resource", (), {})()
-            o.type = rtype
-            o.amount = amount if amount is not None else 1
-            return o

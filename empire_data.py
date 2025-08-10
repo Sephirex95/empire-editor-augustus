@@ -46,20 +46,26 @@ class ResourceType(str, Enum):
     WHEAT = "wheat"
     VEGETABLES = "vegetables"
     FRUIT = "fruit"
-    OLIVES = "olives"
-    VINES = "vines"
     MEAT = "meat"
     FISH = "fish"
-    WINE = "wine"
-    OIL = "oil"
-    IRON = "iron"
-    GOLD = "gold"
-    TIMBER = "timber"   # alias "wood" handled in validation/serializer if you want
     CLAY = "clay"
+    TIMBER = "timber"
+    OLIVES = "olives"
+    VINES = "vines"
+    IRON = "iron"
     MARBLE = "marble"
-    WEAPONS = "weapons"
-    FURNITURE = "furniture"
+    GOLD = "gold"
+    SAND = "sand"
+    STONE = "stone"
     POTTERY = "pottery"
+    FURNITURE = "furniture"
+    OIL = "oil"
+    WINE = "wine"
+    WEAPONS = "weapons"
+    # CONCRETE = "concrete"   # not storable
+    BRICKS = "bricks"
+    # DENARII = "denarii"     # not storable unless in ya pocket mate
+    # TROOPS = "troops"       # not storable unless in barracks lmao 
 
 
 # ---------- Value objects ----------
