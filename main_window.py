@@ -2,15 +2,18 @@ import sys
 import os
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QGraphicsScene, QGraphicsView,
-    QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox, QLabel
+    QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox,
+    QLabel, QDialog, QWidget, QGraphicsEllipseItem, QGraphicsLineItem,
+    QGraphicsItemGroup,  QGraphicsItem,  QMenu, QMenuBar
+
 )
-from PySide6.QtGui import QIcon, QPixmap, QImage, QCursor, QPainter
-from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QPoint
+from PySide6.QtGui import QIcon, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction
+from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QPoint, QRectF, QSizeF, QPointF
 from sg_reader import SgFileReader
 from ui_empire_editor import Ui_MainWindow
 # top of main_window.py (with your other imports)
 import empire_data as ed
-
+from math import hypot
 from enum import Enum, auto
 
 # ---------------------------------------------
@@ -23,6 +26,13 @@ class EmpCityTypes(Enum):
 
 class EmpObjTypes(Enum):
     EMPIRE_EDGE = auto()
+    
+    
+CITYTYPE_TO_KIND = {
+ed.CityType.OURS: EmpCityTypes.OUR,
+getattr(ed.CityType, "TRADE", getattr(ed.CityType, "ROMAN", None)): EmpCityTypes.TRADE,
+getattr(ed.CityType, "DISTANT", None): EmpCityTypes.DISTANT,
+}
 # ---------------------------------------------
 
 
@@ -138,6 +148,27 @@ class ProgramState:
 
     def new_empire(self):
         self.current_empire_object = ed.Empire()
+
+class PaddedHitPixmapItem(QGraphicsPixmapItem):
+    """
+    QGraphicsPixmapItem with an enlarged hit area (for hover/selection).
+    'hitpad' is padding in pixels added on all sides around the icon.
+    """
+    def __init__(self, pixmap, hitpad=6, parent=None):
+        super().__init__(pixmap, parent)
+        self._hitpad = float(hitpad)
+
+    def shape(self) -> QPainterPath:
+        # Local rect in item coords must include the current offset
+        # because we call setOffset(-w/2, -h/2) when centering.
+        pm = self.pixmap()
+        r = QRectF(self.offset(), QSizeF(pm.width(), pm.height()))
+        r.adjust(-self._hitpad, -self._hitpad, self._hitpad, self._hitpad)
+
+        path = QPainterPath()
+        path.addRect(r)
+        return path
+
         
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -146,7 +177,27 @@ class MainWindow(QMainWindow):
         self.ui.setupUi(self)
         self.no_bg_item = None
         self.bg_item = None  # the background QGraphicsPixmapItem
+        # Edge drawing state
+        self.edge_drawing_active = False           # are we in the border drawing mode?
+        self.edge_points_img = []                  # [(x_img, y_img), ...]
+        self.edge_point_items = []                 # [QGraphicsEllipseItem,...] small red dots
+        self.edge_line_items = []                  # [QGraphicsLineItem,...] finalized segments
+        self.edge_temp_line_item = None            # QGraphicsLineItem rubber-band
+        self.edge_hit_epsilon = 6                  # pixels in image coords to detect closing click
+        self.edge_cursor_pixmap = None             # QPixmap used as cursor during edge drawing
+        self.border_edge_hit_items = []   # selectable hit proxies for each segment
+        self.selected_edge_index = None   # index i for edge i -> i+1
 
+        # permanent empire border overlay (icon-based)
+        self.empire_border = False
+        self.border_visual_group = None          # QGraphicsItemGroup for the icon overlay
+        self.border_icon_items = []              # QGraphicsPixmapItem[] belonging to the group
+
+        # selection overlay (dotted stroke + square handles)
+        self.border_sel_line_items = []      # QGraphicsLineItem[]
+        self.border_sel_handle_items = []    # QGraphicsRectItem[]
+        self.border_selected = False
+        
         self.ui.mouse_position_label.setVisible(False)  # hidden until a map is set
         self.city_items = {}  # maps City -> QGraphicsPixmapItem
 
@@ -179,90 +230,237 @@ class MainWindow(QMainWindow):
         self.selected_kind = None        # can be EmpCityTypes or EmpObjTypes
         self.current_icon = None
         self.is_dragging = False
+        self._init_context_menus()
 
-    # ---------- GLOBAL EVENT FILTER ----------
+    def _init_context_menus(self):
+        city_common_menu = [
+            ("Properties", self._placeholder_function),
+            ("Delete City", self._placeholder_function),
+            ("Move City", self._placeholder_function),
+        ]
+
+        self.context_menu_options = {
+            EmpCityTypes.OUR: city_common_menu,
+            EmpCityTypes.DISTANT: city_common_menu,
+            EmpCityTypes.TRADE: city_common_menu,
+            
+            EmpObjTypes.EMPIRE_EDGE: [
+                ("Toggle Edge Hidden", lambda it: self.toggle_edge_hidden_from_item(it)),
+                ("Delete Border", self.delete_empire_border),
+            ],
+        }
+# %% GLOBAL EVENT FILTER
     def eventFilter(self, obj, event):
         et = event.type()
+    
+        # 1) Always ignore modal dialogs
 
-        # Update mouse position label globally
-        if et == QEvent.MouseMove:
-            # Use global position; map into the graphics view to show local coords when inside
-            if hasattr(event, "globalPosition"):
-                gp = event.globalPosition().toPoint()
-            else:
-                gp = QCursor.pos()
-
-            view = self.ui.graphicsView
-            vp = view.viewport()
-            vp_pos = vp.mapFromGlobal(gp)
-            
-            if vp.rect().contains(vp_pos):
-                # 1) Viewport -> Scene (accounts for scroll/zoom/transform)
-                scene_pos = view.mapToScene(vp_pos)
-            
-                ## 2) Scene -> image pixel coords using the background item
-                pm_item = self.bg_item
-                if pm_item is not None:
-                    img_pos = pm_item.mapFromScene(scene_pos)
-                    x, y = int(img_pos.x()), int(img_pos.y())
-                    pm = pm_item.pixmap()
-                    if 0 <= x < pm.width() and 0 <= y < pm.height():
-                        self.ui.mouse_position_label.setText(f"Mouse Position: ({x}, {y})")
-                    else:
-                        self.ui.mouse_position_label.setText("Mouse Position: (—)")
-                else:
-                    self.ui.mouse_position_label.setText(f"Mouse Position: ({scene_pos.x():.1f}, {scene_pos.y():.1f})")
-
-
-            # If showing a floating preview label, keep it under the cursor (optional)
-            if self.is_dragging and self.current_icon is not None:
-                local = self.mapFromGlobal(gp)
-                self.current_icon.move(local)   # <- no half-width/height offset
-
-            # Never consume move events
+        if QApplication.activeModalWidget() or QApplication.activePopupWidget():
             return False
+        #if self._widget_is_in_dialog(obj): #spare helper, might not be needed
+           # return False
+        #for tb in self.findChildren(QToolBar): #
+           # if tb.isAncestorOf(obj):
+               # return False
 
-        # Only intercept clicks while dragging
-        if self.is_dragging and et in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
-            # It will be a QMouseEvent, so these are safe:
-            gp = event.globalPosition().toPoint()
-            btn = event.button()
-
-            # Boundaries
-            view = self.ui.graphicsView
-            vp = view.viewport()
-            inside_view = vp.rect().contains(vp.mapFromGlobal(gp))
-
-            if et == QEvent.MouseButtonPress:
-                # Clicking outside while dragging cancels
-                if btn in (Qt.LeftButton, Qt.RightButton) and not inside_view:
-                    self.deselect_item()
-                    return True  # dont allow widget to process too
-
-            elif et == QEvent.MouseButtonRelease:
-                if btn in (Qt.LeftButton, Qt.RightButton):
-                    # hand off the exact dragged pixmap to the drop
-                    self.pending_drop_pixmap = getattr(self, "drag_pixmap", None)
-            
-                    self.deselect_item()
-                    if inside_view:
-                        view_pos = view.mapFromGlobal(gp)
-                        scene_pos = view.mapToScene(view_pos)
-                        self.handle_icon_drop(scene_pos)
-                    # clear after use
-                    self.pending_drop_pixmap = None
-                    return False
-
-        # Optional: right-click to deselect even when not "dragging"
-        if et == QEvent.MouseButtonPress and hasattr(event, "button") and event.button() == Qt.RightButton:
-            if self.selected_item:
-                self.deselect_item()
-                return False
-
-        # Pass everything else through (important: QObject.eventFilter to avoid recursion)
+        # 2) Dispatch by event type
+        if et == QEvent.MouseMove:
+            return self._handle_mouse_move(event)
+    
+        elif et in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            return self._handle_mouse_click(event)
+    
         return QObject.eventFilter(self, obj, event)
+    # =========================
+    # HELPER HANDLERS
+    # =========================
+
+    def _handle_mouse_move(self, event):
+        """Mouse move: update label, dragging icon, and edge preview."""
+        gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
+        view = self.ui.graphicsView
+        vp = view.viewport()
+        vp_pos = vp.mapFromGlobal(gp)
+    
+        # Update position label
+        if vp.rect().contains(vp_pos):
+            scene_pos = view.mapToScene(vp_pos)
+            if self.edge_drawing_active:
+                self._update_edge_temp_line(scene_pos)
+            self._update_mouse_position_label(scene_pos)
+    
+        # Floating drag icon
+        if self.is_dragging and self.current_icon:
+            self.current_icon.move(self.mapFromGlobal(gp))
+    
+        return False  # don't consume
+    
+    def _handle_mouse_click(self, event):
+        """Mouse clicks: route to drag, edge drawing, or selection logic."""
+        gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
+        view = self.ui.graphicsView
+        vp = view.viewport()
+        inside_view = vp.rect().contains(vp.mapFromGlobal(gp))
+        btn = event.button()
+        et = event.type()
+    
+        # Dragging mode
+        if self.is_dragging:
+            return self._handle_drag_click(event, gp, inside_view)
+    
+        # Edge drawing mode
+        if self.edge_drawing_active and et == QEvent.MouseButtonPress:
+            return self._handle_edge_click(event, gp, inside_view)
+    
+        # Normal mode selection
+        if not self.is_dragging and not self.edge_drawing_active and et == QEvent.MouseButtonPress:
+            return self._handle_normal_click(event, gp, inside_view)
+    
+        return False
+    
+    
+    # =========================
+    # SUB-MODE HANDLERS
+    # =========================
+    
+    def _handle_drag_click(self, event, gp, inside_view):
+        if event.type() == QEvent.MouseButtonPress:
+            if event.button() in (Qt.LeftButton, Qt.RightButton) and not inside_view:
+                self.deselect_item()
+                return True
+        elif event.type() == QEvent.MouseButtonRelease:
+            if event.button() in (Qt.LeftButton, Qt.RightButton):
+                self.pending_drop_pixmap = getattr(self, "drag_pixmap", None)
+                self.deselect_item()
+                if inside_view:
+                    view_pos = self.ui.graphicsView.mapFromGlobal(gp)
+                    scene_pos = self.ui.graphicsView.mapToScene(view_pos)
+                    self.handle_icon_drop(scene_pos)
+                self.pending_drop_pixmap = None
+                return True
+        return False
+    
+    def _handle_edge_click(self, event, gp, inside_view):
+        if event.button() == Qt.RightButton or not inside_view:
+            self._edge_prompt_incomplete()
+            return True
+        if event.button() == Qt.LeftButton:
+            scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
+            xy = self._scene_to_image_xy(scene_pos)
+            if xy is None:
+                self._edge_prompt_incomplete()
+                return True
+            x, y = xy
+            close_idx = self._edge_hit_existing_point(x, y)
+            if close_idx is not None:
+                self._finalize_edge(success=True, close_to_index=close_idx)
+            else:
+                self._edge_append_point(x, y)
+            return True
+        return False
+            
+    def _handle_normal_click(self, event, gp, inside_view):
+        # --- RIGHT CLICK ---
+        if event.button() == Qt.RightButton and inside_view:
+            scene_pos = self.ui.graphicsView.mapToScene(
+                self.ui.graphicsView.viewport().mapFromGlobal(gp)
+            )
+            items = self.scene.items(scene_pos)
+    
+            for it in items:
+                if it.flags() & QGraphicsItem.ItemIsSelectable:
+                    # Optional: auto-select before showing menu
+                    self._select_scene_item(it)
+                    self._show_context_menu_for_item(it, gp)
+                    return True
+    
+            # No selectable item → clear selection
+            self.deselect_all()
+            return True
+    
+        # --- LEFT CLICK ---
+        if event.button() == Qt.LeftButton and inside_view:
+            scene_pos = self.ui.graphicsView.mapToScene(
+                self.ui.graphicsView.viewport().mapFromGlobal(gp)
+            )
+            items = self.scene.items(scene_pos)
+    
+            for it in items:
+                if it.flags() & QGraphicsItem.ItemIsSelectable:
+                    self._select_scene_item(it)
+                    return True
+    
+            # Clicked empty spot → clear selection
+            self.deselect_all()
+            return True
+    
+        return False
+
+
+# %% Input adjacent Functions
+# %%% Selection handling:
+    def _select_scene_item(self, item):
+        """
+        Handle selecting any selectable object on the scene.
+        Only one selection can be active at a time.
+        """
+        # Clear ALL previous selection states
+        self.clear_border_selection_overlay()
+        self.deselect_city_marker()
+        self.border_selected = False
+        self.selected_item = None
+    
+        # Edge segment (hit proxy)
+        if item in self.border_edge_hit_items:
+            self.selected_edge_index = item.data(Qt.UserRole + 1)  # i for edge i -> i+1
+            self.select_empire_border_overlay()  # keep your selection visuals
+            self.selected_item = item
+            return
+        
+        # (optional: keep vertex/icon handling if you still want it)
+        if item in self.border_icon_items:
+            self.select_empire_border_overlay()
+            self.selected_item = item
+            return
+
+            
+        # City markers
+        if hasattr(item, "data") and callable(item.data):
+            city_obj = item.data(1)
+            if city_obj and getattr(city_obj, "__class__", None).__name__ == "City":
+                self.select_city_marker(item, city_obj)
+                return
+    
+        # If nothing matched, ensure nothing is selected
+        self.deselect_all()
+
+        
+    def select_city_marker(self, item, city_obj):
+        """Visual + state change when a city marker is selected."""
+        self.selected_item = item
+        # You could change appearance here (glow, outline, etc.)
+        # Or just rely on QGraphicsItem's built-in selection visuals
+        item.setSelected(True)
+        # Maybe update side panel UI here
+    
+    def deselect_city_marker(self):
+        """Clear city selection visuals."""
+        if self.selected_item and self.selected_item in self.city_items.values():
+            self.selected_item.setSelected(False)
+        self.selected_item = None
 
     # ---------- LIST / DRAGGING ----------
+    def _update_mouse_position_label(self, scene_pos):
+        pm_item = self.bg_item
+        if pm_item is not None:
+            img_pos = pm_item.mapFromScene(scene_pos)
+            x, y = int(img_pos.x()), int(img_pos.y())
+            pm = pm_item.pixmap()
+            if 0 <= x < pm.width() and 0 <= y < pm.height():
+                self.ui.mouse_position_label.setText(f"Mouse Position: ({x}, {y})")
+            else:
+                self.ui.mouse_position_label.setText("")
+        return 
     def on_item_clicked(self, item):
         if self.selected_item == item:
             # already selected -> deselect
@@ -272,8 +470,8 @@ class MainWindow(QMainWindow):
             # visually mark it selected in the list
             self.ui.listWidget.setCurrentItem(item)
 
-
     def select_item(self, item):
+        self.deselect_all() # clear current selections first
         self.selected_item = item
         self.selected_kind = item.data(Qt.UserRole)  # EmpCityTypes or EmpObjTypes
         pixmap = item.icon().pixmap(self.ui.listWidget.iconSize())
@@ -309,6 +507,445 @@ class MainWindow(QMainWindow):
         # FIX: also clear the QListWidget’s selection so it’s not visually highlighted
         self.ui.listWidget.clearSelection()
         self._apply_interactivity_to_all(True)
+            
+    def deselect_all(self):
+        self.clear_border_selection_overlay()
+        self.deselect_city_marker()
+        self.border_selected = False
+        self.selected_item = None
+        self.selected_edge_index = None
+
+    def clear_border_selection_overlay(self):
+        """Remove dotted stroke + handles if present."""
+        for it in self.border_sel_line_items:
+            self.scene.removeItem(it)
+        for it in self.border_sel_handle_items:
+            self.scene.removeItem(it)
+        self.border_sel_line_items.clear()
+        self.border_sel_handle_items.clear()
+        self.border_selected = False
+        
+        
+    def remove_city(self, city):
+        empire = self.state.current_empire_object
+        if empire and city in empire.cities:
+            empire.cities.remove(city)
+        self._remove_city_marker(city)
+        # updated enum check
+        if self.selected_item and self.selected_item.data(Qt.UserRole) == EmpCityTypes.OUR:
+            self.deselect_item()
+            
+    def clear_empire_border_visual(self):
+        self.clear_border_selection_overlay()
+        if self.border_visual_group is not None:
+            try:
+                self.scene.removeItem(self.border_visual_group)
+            except Exception:
+                pass
+            self.border_visual_group = None
+        self.border_icon_items.clear()
+    
+        
+    def select_empire_border_overlay(self):
+        """Mark the existing border overlay as selected, highlight selected edge thicker."""
+        e = self.state.current_empire_object
+        if not (self.empire_border and e and getattr(e, "border", None) and self.bg_item):
+            return
+        pts = [(edge.x, edge.y) for edge in getattr(e.border, "edges", [])]
+        if len(pts) < 2:
+            return
+    
+        self.clear_border_selection_overlay()
+    
+        selected_edge_idx = getattr(self, "selected_edge_index", None)
+    
+        # Draw dotted outline, making the selected edge thicker
+        for i in range(len(pts)):
+            x0, y0 = pts[i]
+            x1, y1 = pts[(i + 1) % len(pts)]
+            p0 = self.bg_item.mapToScene(x0, y0)
+            p1 = self.bg_item.mapToScene(x1, y1)
+    
+            # Thicker pen for the selected edge
+            if selected_edge_idx == i:
+                pen = QPen(Qt.black, 3)
+            else:
+                pen = QPen(Qt.black, 1)
+            pen.setStyle(Qt.DotLine)
+    
+            seg = self.scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
+            seg.setZValue(120)  # above icons
+            self.border_sel_line_items.append(seg)
+    
+        # Square handles at vertices
+        handle_size = 6
+        half = handle_size / 2.0
+        hpen = QPen(Qt.black, 1)
+        hbrush = QBrush(Qt.white)
+        for x, y in pts:
+            p = self.bg_item.mapToScene(x, y)
+            rect = self.scene.addRect(p.x() - half, p.y() - half, handle_size, handle_size, hpen, hbrush)
+            rect.setZValue(130)
+            self.border_sel_handle_items.append(rect)
+    
+        self.border_selected = True
+    
+
+    # %%% other input-adjacent 
+    def _show_context_menu_for_item(self, item, global_pos):
+        """Show context menu based on enum stored in item."""
+        if not (hasattr(item, "data") and callable(item.data)):
+            return
+    
+        obj_type = item.data(Qt.UserRole)
+        if obj_type not in self.context_menu_options:
+            return
+    
+        menu = QMenu(self)
+        for label, callback in self.context_menu_options[obj_type]:
+            act = QAction(label, self)
+            # Pass both the scene item and its type to the callback if needed
+            act.triggered.connect(lambda checked=False, cb=callback, it=item: cb(it))
+            menu.addAction(act)
+    
+        menu.exec(global_pos)
+        
+    def _placeholder_function(self):
+        print("joke's on you, this does nothing")
+# %% Everything else    
+    def _begin_edge_drawing(self, x_img: int, y_img: int):
+        self._edge_clear_scene_items()
+        self.edge_points_img = []
+        self.edge_drawing_active = True
+        self._edge_append_point(x_img, y_img, make_segment=False)  # first point
+        self._edge_create_temp_line()                               # rubber-band
+    
+    
+    def _edge_create_temp_line(self):
+        if not self.edge_points_img or self.bg_item is None:
+            return
+        last_x, last_y = self.edge_points_img[-1]
+        p0 = self.bg_item.mapToScene(last_x, last_y)
+        pen = QPen(Qt.red, 2)
+        if self.edge_temp_line_item is None:
+            self.edge_temp_line_item = self.scene.addLine(p0.x(), p0.y(), p0.x(), p0.y(), pen)
+            self.edge_temp_line_item.setZValue(100)
+        else:
+            self.edge_temp_line_item.setLine(p0.x(), p0.y(), p0.x(), p0.y())
+    
+    def _update_edge_temp_line(self, cursor_scene_pos):
+        if not self.edge_drawing_active or self.edge_temp_line_item is None or not self.edge_points_img or self.bg_item is None:
+            return
+        last_x, last_y = self.edge_points_img[-1]
+        p0 = self.bg_item.mapToScene(last_x, last_y)
+        line = self.edge_temp_line_item.line()
+        line.setP1(p0)
+        line.setP2(cursor_scene_pos)
+        self.edge_temp_line_item.setLine(line)
+
+    
+    def _edge_append_point(self, x_img: int, y_img: int, make_segment: bool = True):
+        """Append a point to the polyline, place a red dot, and optionally finalize a segment from previous point."""
+
+    
+        if self.bg_item is None:
+            return
+    
+        # Add point to model list
+        self.edge_points_img.append((x_img, y_img))
+    
+        # Draw red dot centered at (x_img, y_img), radius 3 px
+        p = self.bg_item.mapToScene(x_img, y_img)
+        dot_rect = (p.x() - 3, p.y() - 3, 6, 6)
+        dot_item = self.scene.addEllipse(*dot_rect, QPen(Qt.NoPen), QBrush(Qt.red))
+        dot_item.setZValue(90)
+        self.edge_point_items.append(dot_item)
+    
+        # If we have at least two points and make_segment is True, finalize a line between them
+        if make_segment and len(self.edge_points_img) >= 2:
+            x0, y0 = self.edge_points_img[-2]
+            p0 = self.bg_item.mapToScene(x0, y0)
+            pen = QPen(Qt.red, 2)
+            line_item = self.scene.addLine(p0.x(), p0.y(), p.x(), p.y(), pen)
+            line_item.setZValue(80)
+            self.edge_line_items.append(line_item)
+    
+        # Rubber-band should start from the newest point
+        self._edge_create_temp_line()
+    
+    def _edge_hit_existing_point(self, x_img: int, y_img: int):
+        """Return index of an existing point the click hits (within epsilon), else None."""
+        eps = self.edge_hit_epsilon
+        for idx, (px, py) in enumerate(self.edge_points_img):
+            if abs(px - x_img) <= eps and abs(py - y_img) <= eps:
+                return idx
+        return None
+    
+    def _edge_prompt_incomplete(self):
+        """Handle not-success termination: offer Yes/No/Cancel."""
+        if not self.edge_points_img:
+            # nothing to do
+            self._edge_abort(erase=True)
+            return
+    
+        resp = QMessageBox.warning(
+            self,
+            "Incomplete Border",
+            "You have not closed the border shape. Would you like to save this border shape?",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+    
+        if resp == QMessageBox.Yes:
+            # Save as is, closing last link to the first point
+            self._finalize_edge(success=True, close_to_index=0)
+        elif resp == QMessageBox.No:
+            # Erase and cancel
+            self._edge_abort(erase=True)
+        else:
+            # Cancel -> continue drawing
+            # nothing changes
+            return
+        
+    def _finalize_edge(self, success: bool, close_to_index: int | None):
+        """
+        Success finalize: close the shape to the given point index (usually 0 or a hit index),
+        save to the model, and end the session by replacing temp visuals with a permanent icon overlay.
+        """
+        if not success:
+            self._edge_abort(erase=True)
+            self.empire_border = False
+            return
+    
+        if not self.edge_points_img or len(self.edge_points_img) < 2:
+            self._edge_abort(erase=True)
+            self.empire_border = False
+            return
+    
+        # Work on a copy so we can rotate safely
+        pts = list(self.edge_points_img)
+    
+        # If we know which vertex we clicked to close, draw the closing segment visually
+        if close_to_index is not None and self.bg_item is not None:
+            x_last, y_last = pts[-1]
+            x_close, y_close = pts[close_to_index]
+            p_last = self.bg_item.mapToScene(x_last, y_last)
+            p_close = self.bg_item.mapToScene(x_close, y_close)
+            close_item = self.scene.addLine(p_last.x(), p_last.y(), p_close.x(), p_close.y(), QPen(Qt.red, 2))
+            close_item.setZValue(80)
+            self.edge_line_items.append(close_item)
+    
+            # Rotate so the first vertex becomes the clicked/closed one (canonical order)
+            if close_to_index != 0:
+                pts = pts[close_to_index:] + pts[:close_to_index]
+    
+        # Clean consecutive duplicates (defensive)
+        cleaned = []
+        for x, y in pts:
+            if not cleaned or cleaned[-1] != (x, y):
+                cleaned.append((x, y))
+    
+        # 1) Save to model with default density=28
+        self._save_border_shape(cleaned, density=28)
+    
+        # 2) Erase temporary red dots/lines and stop drawing mode
+        self._edge_abort(erase=True)
+    
+        # 3) Mark border present and render the permanent overlay
+        self.empire_border = True
+        self.render_empire_border()
+    
+
+
+    def _edge_abort(self, erase: bool):
+        """Stop the drawing session. If erase is True, remove items from the scene."""
+        # Remove rubber-band
+        if self.edge_temp_line_item is not None:
+            self.scene.removeItem(self.edge_temp_line_item)
+            self.edge_temp_line_item = None
+    
+        if erase:
+            # Remove all visual items
+            for it in self.edge_line_items:
+                self.scene.removeItem(it)
+            for it in self.edge_point_items:
+                self.scene.removeItem(it)
+    
+        # Reset state
+        self.edge_line_items.clear()
+        self.edge_point_items.clear()
+        self.edge_points_img = []
+        self.edge_drawing_active = False
+        # clear the drawing cursor
+        self._apply_drawing_cursor(False)
+        self.edge_cursor_pixmap = None
+    
+    def _edge_clear_scene_items(self):
+        """Utility to clear any leftover edge items (without touching state flags)."""
+        if self.edge_temp_line_item is not None:
+            self.scene.removeItem(self.edge_temp_line_item)
+            self.edge_temp_line_item = None
+        for it in self.edge_line_items:
+            self.scene.removeItem(it)
+        for it in self.edge_point_items:
+            self.scene.removeItem(it)
+        self.edge_line_items.clear()
+        self.edge_point_items.clear()
+        
+    def _save_border_shape(self, points_img_xy, density: int = 28):
+        """
+        Persist the border polyline to the model as ed.Border with ed.Edge entries.
+        The polyline is understood as closed (last segment to first).
+        """
+        empire = self.state.current_empire_object
+        if empire is None:
+            return
+    
+        try:
+            edges = [ed.Edge(x=int(x), y=int(y), hidden=False) for (x, y) in points_img_xy]
+            border_obj = ed.Border(density=int(density), edges=edges)
+            empire.border = border_obj  # single border only
+        except Exception:
+            # Fallback if dataclasses not available for some reason
+            border_obj = type("Border", (), {})()
+            border_obj.density = int(density)
+            border_obj.edges = [type("Edge", (), {"x": int(x), "y": int(y), "hidden": False})() for (x, y) in points_img_xy]
+            empire.border = border_obj
+    
+    def _get_empire_edge_pixmap(self) -> QPixmap:
+        """
+        Return the Empire Edge icon pixmap at its ORIGINAL size (no scaling).
+        """
+        for el in getattr(self.state, "elements", []):
+            # find the empire-edge entry
+            try:
+                if el["kind"].name == "EMPIRE_EDGE":
+                    # convert PIL -> QPixmap WITHOUT scaling
+                    pm = self.pil_to_qpixmap(el["pil"])
+                    # (optional) make sure DPR doesn’t inflate it on HiDPI
+                    pm.setDevicePixelRatio(1.0)
+                    return pm
+            except Exception:
+                pass
+        # fallback transparent 1×1 to avoid crashes
+        fallback = QPixmap(1, 1)
+        fallback.fill(Qt.transparent)
+        return fallback
+
+    def toggle_selected_edge_hidden(self): #toggles selected edge
+        e = self.state.current_empire_object
+        i = self.selected_edge_index
+        if not (e and getattr(e, "border", None)) or i is None:
+            return
+        edges = e.border.edges
+        if 0 <= i < len(edges):
+            edges[i].hidden = not bool(getattr(edges[i], "hidden", False))
+            self.render_empire_border()
+            
+    def toggle_edge_hidden_from_item(self, item): #from item reference
+        e = self.state.current_empire_object
+        if not (e and getattr(e, "border", None)):
+            return
+        i = item.data(Qt.UserRole + 1)
+        if i is None:
+            return
+        edges = e.border.edges
+        if 0 <= i < len(edges):
+            edges[i].hidden = not bool(getattr(edges[i], "hidden", False))
+            self.render_empire_border()
+
+             
+            
+    def render_empire_border(self):
+        if not self.empire_border:
+            return
+        e = self.state.current_empire_object
+        if e is None or getattr(e, "border", None) is None or self.bg_item is None:
+            return
+    
+        pts = [(edge.x, edge.y) for edge in getattr(e.border, "edges", [])]
+        if len(pts) < 2:
+            return
+    
+        hidden = [bool(getattr(edg, "hidden", False)) for edg in e.border.edges]
+        density = getattr(e.border, "density", 28) or 28
+        icon_pm = self._get_empire_edge_pixmap()
+        if icon_pm.isNull():
+            return
+    
+        # clear previous visuals
+        self.clear_border_selection_overlay()
+        self.clear_empire_border_visual()
+        self.border_edge_hit_items.clear()
+    
+        # group for everything
+        self.border_visual_group = QGraphicsItemGroup()
+        self.border_visual_group.setZValue(75)
+        self.scene.addItem(self.border_visual_group)
+    
+        # helpers
+        def place_flag_icon(x_img: int, y_img: int):
+            pos_scene = self.bg_item.mapToScene(x_img, y_img)
+            it = PaddedHitPixmapItem(icon_pm, hitpad=6)
+            it.setOffset(-icon_pm.width() / 2, -icon_pm.height() / 2)
+            it.setPos(pos_scene)
+            it.setZValue(75)
+            it.setFlag(QGraphicsPixmapItem.ItemIsSelectable, False)
+            it.setAcceptHoverEvents(False)
+            it.setCursor(Qt.ArrowCursor)
+            # tags (optional): treat as border visuals
+            it.setData(Qt.UserRole, EmpObjTypes.EMPIRE_EDGE)
+            self.border_visual_group.addToGroup(it)
+            self.border_icon_items.append(it)
+    
+        def place_blue_vertex(i: int):
+            p = self.bg_item.mapToScene(pts[i][0], pts[i][1])
+            r = 5.0
+            dot = self.scene.addEllipse(p.x()-r, p.y()-r, 2*r, 2*r,
+                                        QPen(Qt.NoPen), QBrush(Qt.blue))
+            dot.setZValue(85)
+            self.border_visual_group.addToGroup(dot)
+    
+        n = len(pts)
+    
+        # build a selectable, thick, invisible line for EACH segment i -> j
+        for i in range(n):
+            j = (i + 1) % n
+    
+            p0 = self.bg_item.mapToScene(pts[i][0], pts[i][1])
+            p1 = self.bg_item.mapToScene(pts[j][0], pts[j][1])
+    
+            hit = QGraphicsLineItem(p0.x(), p0.y(), p1.x(), p1.y())
+            hit.setPen(QPen(Qt.transparent, 12))  # fat invisible hit area
+            hit.setZValue(76)
+            hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
+            hit.setData(Qt.UserRole, EmpObjTypes.EMPIRE_EDGE)   # same menu bucket
+            hit.setData(Qt.UserRole + 1, i)                     # edge index i
+            self.border_visual_group.addToGroup(hit)
+            self.border_edge_hit_items.append(hit)
+    
+            # show blue dot at START vertex of any hidden edge
+            if hidden[i]:
+                place_blue_vertex(i)
+                continue  # skip flag stamping on this segment
+    
+            # stamp flags along visible segment i -> j
+            dx = pts[j][0] - pts[i][0]
+            dy = pts[j][1] - pts[i][1]
+            seg_len = (dx*dx + dy*dy) ** 0.5
+            if seg_len <= 1e-6:
+                continue
+            ux, uy = dx/seg_len, dy/seg_len
+    
+            # optionally place one at the start
+            place_flag_icon(pts[i][0], pts[i][1])
+    
+            dist = density
+            while dist <= seg_len + 1e-6:
+                sx = pts[i][0] + ux * dist
+                sy = pts[i][1] + uy * dist
+                place_flag_icon(int(round(sx)), int(round(sy)))
+                dist += density
 
     # ---------- ROUTER ----------
     def drop_object(self, scene_pos):
@@ -364,7 +1001,18 @@ class MainWindow(QMainWindow):
     def _no_bg_item_alive(self):
         # alive iff we have an object AND it still belongs to a scene
         return self.no_bg_item is not None and self.no_bg_item.scene() is not None
-        
+    
+    def _widget_is_in_dialog(self, obj) -> bool:
+        """Return True if the event target is inside a dialog/menu/menubar."""
+        w = obj
+        while w is not None:
+            if isinstance(w, (QDialog, QMenu, QMenuBar)):
+                return True
+            w = w.parent()
+        return False
+
+
+
     def _scene_to_image_xy(self, scene_pos):
         if self.bg_item is None:
             return None
@@ -453,6 +1101,9 @@ class MainWindow(QMainWindow):
             item.setFlag(QGraphicsPixmapItem.ItemIsMovable, False)
             item.setData(0, key)
             item.setData(1, city)
+            kind = CITYTYPE_TO_KIND.get(getattr(city, "type", None))
+            if kind is not None:
+                item.setData(Qt.UserRole, kind)
             self.scene.addItem(item)
             self.city_items[key] = item
     
@@ -488,7 +1139,7 @@ class MainWindow(QMainWindow):
         """Remove the placeholder text when a background is set."""
         if self._no_bg_item_alive():
             self.scene.removeItem(self.no_bg_item)
-        self.no_bg_item = None  # important: clear stale reference
+        self.no_bg_item = None  # clear stale reference
         self.ui.mouse_position_label.setVisible(True)
     
     def center_no_background_message(self):
@@ -523,7 +1174,8 @@ class MainWindow(QMainWindow):
         self.scene.setSceneRect(pixmap.rect())
         self.ui.graphicsView.setEnabled(True)
         self.remove_no_background_message()
-
+        if self.empire_border and getattr(self.state.current_empire_object, "border", None):
+            self.render_empire_border()
     def set_cursor_to_icon(self, pixmap):
         """
         Set the cursor to the custom icon on *all* relevant widgets so the
@@ -535,7 +1187,21 @@ class MainWindow(QMainWindow):
         self.setCursor(cursor)
         self.ui.graphicsView.setCursor(cursor)
         self.ui.graphicsView.viewport().setCursor(cursor)
-    
+        
+    def _apply_drawing_cursor(self, enable: bool):
+        """Show/hide the 'drawing mode' cursor across main, view, and viewport."""
+        if enable and self.edge_cursor_pixmap is not None:
+            cursor = QCursor(self.edge_cursor_pixmap, 0, 0)
+            self.setCursor(cursor)
+            self.ui.graphicsView.setCursor(cursor)
+            self.ui.graphicsView.viewport().setCursor(cursor)
+        else:
+            for w in (self, self.ui.graphicsView, self.ui.graphicsView.viewport()):
+                try:
+                    w.unsetCursor()
+                except Exception:
+                    pass
+
     def reset_cursor(self):
         """
         Reset cursors back to default on all widgets touched above.
@@ -587,6 +1253,8 @@ class MainWindow(QMainWindow):
         self.scene.setSceneRect(pixmap.rect())
         self.ui.graphicsView.setEnabled(True)
         self.remove_no_background_message()
+        if self.empire_border and getattr(self.state.current_empire_object, "border", None):
+            self.render_empire_border()
 
     def _ensure_new_empire_for_new_background(self) -> bool:
         """
@@ -611,15 +1279,8 @@ class MainWindow(QMainWindow):
         # Clear any old markers
         self.city_items.clear()
         return True
+        
     
-    def remove_city(self, city):
-        empire = self.state.current_empire_object
-        if empire and city in empire.cities:
-            empire.cities.remove(city)
-        self._remove_city_marker(city)
-        # updated enum check
-        if self.selected_item and self.selected_item.data(Qt.UserRole) == EmpCityTypes.OUR:
-            self.deselect_item()
 
     # -------------------------------------------------------
     # New "city" drop handler (generalized), keeps old name too
@@ -678,18 +1339,53 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------
     # Non-city handler(s)
     # -------------------------------------------------------
+    def delete_empire_border(self, force = False):
+        resp = QMessageBox.question(
+            self,
+            "Remove border?",
+            "Would you like to remove current empire border?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+        self.clear_empire_border_visual()
+        self.state.current_empire_object.border = None
+        self.empire_border = False
+        self.clear_border_selection_overlay() 
+        
     def handle_drop_empire_edge(self, scene_pos):
-        """
-        Placeholder for EMPIRE_EDGE object drop logic.
-        Keep the function (it was referenced) and implement later as needed.
-        """
-        # For now, just notify position - hook your real edge building logic here.
+        # If we already have a border, ask first
+        if self.empire_border and getattr(self.state.current_empire_object, "border", None):
+            resp = QMessageBox.question(
+                self,
+                "Start New Border?",
+                "An empire border already exists. Start a new one and discard the current border?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
+            # erase model + visuals
+            self.delete_empire_border(force = True)
+    
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
             QMessageBox.warning(self, "No background", "Drop onto the background image area.", QMessageBox.Ok)
             return
         x, y = xy
-        QMessageBox.information(self, "Empire Edge", f"Empire edge drop at ({x}, {y}).", QMessageBox.Ok)
+    
+        if not self.state.check_if_empire():
+            self.state.new_empire()
+    
+        # Keep the same drawing cursor as during drag
+        self.edge_cursor_pixmap = getattr(self, "pending_drop_pixmap", None) or getattr(self, "drag_pixmap", None)
+        # if you use global overrides here, call your helper; otherwise skip
+        self._apply_drawing_cursor(True)
+        self._begin_edge_drawing(x, y)
+
+
+
 
     def closeEvent(self, event):
         QApplication.quit()
