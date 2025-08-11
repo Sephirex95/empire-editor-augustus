@@ -24,7 +24,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractButton, QAbstractSpinBox, QApplication, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QLabel, QLineEdit, QListView, QListWidget,
+    QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QSizePolicy, QSpinBox,
     QVBoxLayout, QWidget)
 
@@ -62,20 +62,20 @@ class Ui_Dialog(object):
 
         self.verticalLayout.addWidget(self.label_5)
 
-        self.listWidget = QListWidget(self.verticalLayoutWidget)
-        self.listWidget.setObjectName(u"listWidget")
+        self.listWidgetSells = QListWidget(self.verticalLayoutWidget)
+        self.listWidgetSells.setObjectName(u"listWidgetSells")
 
-        self.verticalLayout.addWidget(self.listWidget)
+        self.verticalLayout.addWidget(self.listWidgetSells)
 
         self.label_6 = QLabel(self.verticalLayoutWidget)
         self.label_6.setObjectName(u"label_6")
 
         self.verticalLayout.addWidget(self.label_6)
 
-        self.listView = QListView(self.verticalLayoutWidget)
-        self.listView.setObjectName(u"listView")
+        self.listWidgetBuys = QListWidget(self.verticalLayoutWidget)
+        self.listWidgetBuys.setObjectName(u"listWidgetBuys")
 
-        self.verticalLayout.addWidget(self.listView)
+        self.verticalLayout.addWidget(self.listWidgetBuys)
 
         self.formLayoutWidget = QWidget(Dialog)
         self.formLayoutWidget.setObjectName(u"formLayoutWidget")
@@ -213,7 +213,7 @@ class Ui_Dialog(object):
         self.label_4.setText(QCoreApplication.translate("Dialog", u"Type", None))
         self.comboBox_2.setItemText(0, QCoreApplication.translate("Dialog", u"Land", None))
         self.comboBox_2.setItemText(1, QCoreApplication.translate("Dialog", u"Sea", None))
-
+        
         self.pushButton.setText(QCoreApplication.translate("Dialog", u"Plot Trade Route", None))
     # retranslateUi
 

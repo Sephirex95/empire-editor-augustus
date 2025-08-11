@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPalette
 from edit_city import Ui_Dialog # <-- your generated file/class name
-from empire_data import ResourceType      # <-- your enum
+from empire_data import ResourceType, CityType  
 
 import sys
 # --- helpers ---------------------------------------------------------------
@@ -25,16 +25,31 @@ def enum_strings(enum_cls):
         items.append(s)
     return items
 
+def to_city_type(text: str) -> CityType | None:
+    """Map translated/pretty UI labels to CityType (case-insensitive)."""
+    if not text:
+        return None
+    key = text.strip().lower()
+    mapping = {
+        "ours": CityType.OURS,
+        "trade": CityType.TRADE,
+        "roman": CityType.ROMAN,
+        "distant": CityType.DISTANT,
+        "vulnerable": CityType.VULNERABLE,
+    }
+    return mapping.get(key)
+
 
 class ResourceRow(QWidget):
-    def __init__(self, resources, parent=None):
+    def __init__(self, resources, ours=False, parent=None):
         super().__init__(parent)
 
         self.combo = QComboBox(self)
         self.combo.addItem("NONE")
         self.combo.addItems(resources)
         self.combo.wheelEvent = lambda e: e.ignore()  # disable scroll
-
+        
+        #if not ours: #no counter for our city resource list
         self.spin = QSpinBox(self)
         self.spin.setRange(0, 5000)
         self.spin.setSingleStep(1)
@@ -47,11 +62,14 @@ class ResourceRow(QWidget):
         lay.setSpacing(6)
         lay.addWidget(self.combo, 1)
         lay.addWidget(self.spin, 0)
+        if ours:
+            self.spin.setVisible(False)
 
 
 class DynamicList:
     """Manages ResourceRow widgets inside a QListWidget with add/remove rules."""
-    def __init__(self, list_widget: QListWidget, resources):
+    def __init__(self, list_widget: QListWidget, resources, dialog: "CityPropertiesDialog"):
+        self.dialog = dialog
         self.list = list_widget
         self.resources_all = list(resources)          # full list (no NONE)
         self.available_resources = list(resources)    # mutable pool (no NONE)
@@ -69,7 +87,12 @@ class DynamicList:
         max_rows = len(self.resources_all)  # only allow up to total resources
         if idx == last_idx and row_widget.combo.currentText() != "NONE" and self.list.count() < max_rows:
             self._append_row("NONE")
-
+            
+    def set_spins_visible(self, visible: bool):
+        for i in range(self.list.count()):
+            w = self.list.itemWidget(self.list.item(i))
+            if isinstance(w, ResourceRow) and hasattr(w, "spin"):
+                w.spin.setVisible(visible)
 
     def schedule_remove_if_none(self, row_widget: ResourceRow):
         idx = self._index_of(row_widget)
@@ -119,7 +142,11 @@ class DynamicList:
 
     # ----- internals -----
     def _append_row(self, initial_text: str):
-        row = ResourceRow(self.available_resources, self.list)  # pool only = real resources
+ 
+
+        ctype_ours = (self.dialog.current_city_type == CityType.OURS)
+        row = ResourceRow(self.available_resources, ours=ctype_ours, parent=self.list)
+        #row = ResourceRow(self.available_resources, self.list, ctype_ours)  # pool only = real resources
         # NO: row.combo.insertItem(0, "NONE")  # ResourceRow already did this
         row.combo.setCurrentText(initial_text)
 
@@ -189,21 +216,33 @@ class CityPropertiesDialog(QDialog):
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
 
-        # Replace the Designer "listView" with a QListWidget so we can host widgets
-        self.buyList = QListWidget(self.ui.verticalLayoutWidget)
-        # Insert into the same layout spot where listView was
-        vlay = self.ui.verticalLayout
-        idx = vlay.indexOf(self.ui.listView)
-        vlay.removeWidget(self.ui.listView)
-        self.ui.listView.setParent(None)
-        vlay.insertWidget(idx, self.buyList)
-
-        # Collect resource names
+        # Cache references to the relevant UI bits
+        self._type_combo = getattr(self.ui, "comboBox", None)        # top "Type" combobox
+        self._trade_group = getattr(self.ui, "groupBox_2", None)     # likely "Trade Route" group box
+        self.current_city_type = None
         res_names = enum_strings(ResourceType)
+        self.sells = DynamicList(self.ui.listWidgetSells, res_names, self)
+        self.buys  = DynamicList(self.ui.listWidgetBuys, res_names, self)
+
+
+        if self._type_combo is not None:
+            self._type_combo.currentTextChanged.connect(self.on_city_type_changed)
+            # apply initial state
+            self.on_city_type_changed(self._type_combo.currentText())
+            self.current_city_type = CityType(self._type_combo.currentText().lower()) #cast from text to class object
+
+        # self.buyList = QListWidget(self.ui.verticalLayoutWidget)
+        # vlay = self.ui.verticalLayout
+        # idx = vlay.indexOf(self.ui.listView)
+        # vlay.removeWidget(self.ui.listView)
+        # self.ui.listView.setParent(None)
+        
+        # vlay.insertWidget(idx, self.buyList)
+        # Collect resource names
+
 
         # Controllers for Sells and Buys
-        self.sells = DynamicList(self.ui.listWidget, res_names)
-        self.buys  = DynamicList(self.buyList,          res_names)
+
         self.ui.comboBox_2.setStyleSheet("")  # clear custom styles
         print(self.ui.groupBox_2.isEnabled())
         print("Enabled:", self.ui.comboBox_2.isEnabled())
@@ -216,8 +255,31 @@ class CityPropertiesDialog(QDialog):
             }
         """)
         # Optional: set sensible widths
-        self.ui.listWidget.setUniformItemSizes(False)
-        self.buyList.setUniformItemSizes(False)
+        self.ui.listWidgetSells.setUniformItemSizes(False)
+        self.ui.listWidgetBuys.setUniformItemSizes(False)
+        
+    def on_city_type_changed(self, text: str):
+        """Show trade route UI only if city type is TRADE."""
+        ctype = to_city_type(text)
+        self.current_city_type = ctype
+        # Rule summary:
+        # - OURS, ROMAN, DISTANT, VULNERABLE -> hide trade route box & layout (and children)
+        # - TRADE -> show them
+        show_trade_route = (ctype == CityType.TRADE)
+        show_trade_lists = (ctype == CityType.TRADE or ctype == CityType.OURS)
+        # Group box: one call hides/shows all its children
+        if self._trade_group is not None:
+            self.ui.groupBox.setVisible(show_trade_lists)
+            self.ui.groupBox_2.setVisible(show_trade_route)
+            if ctype == CityType.OURS:
+                self.ui.label_6.setVisible(False)
+                self.ui.listWidgetBuys.setVisible(False)
+                self.sells.set_spins_visible(False)  
+            elif ctype == CityType.TRADE:
+                self.ui.label_6.setVisible(True)
+                self.ui.listWidgetBuys.setVisible(True)
+                self.sells.set_spins_visible(True)  
+        # If you also have a separate layout area to hide:
 
 # --- quick test harness ----------------------------------------------------
 if __name__ == "__main__":
