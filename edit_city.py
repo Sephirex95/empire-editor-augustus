@@ -215,5 +215,6 @@ class Ui_Dialog(object):
         self.comboBox_2.setItemText(1, QCoreApplication.translate("Dialog", u"Sea", None))
         
         self.pushButton.setText(QCoreApplication.translate("Dialog", u"Plot Trade Route", None))
+        
     # retranslateUi
 

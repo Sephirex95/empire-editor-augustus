@@ -12,7 +12,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPalette
 from edit_city import Ui_Dialog # <-- your generated file/class name
-from empire_data import ResourceType, CityType  
+from empire_data import (
+    ResourceType, CityType, TradeRoute,
+    Resource, TradePoint, City, TradeRouteType
+)
 
 import sys
 # --- helpers ---------------------------------------------------------------
@@ -38,6 +41,50 @@ def to_city_type(text: str) -> CityType | None:
         "vulnerable": CityType.VULNERABLE,
     }
     return mapping.get(key)
+
+def enum_text(e) -> str:
+    return e.value if hasattr(e, "value") else str(e)
+
+# def city_to_widget_values(c: City) -> dict:
+#     """Pure converter: dataclass -> plain values for widgets. No validation, no defaults."""
+#     return {
+#         "name": c.name,
+#         "x": c.x,
+#         "y": c.y,
+#         "city_type": c.type,                          # keep enums
+#         "trade_route_type": c.trade_route_type,
+#         "trade_route_cost": c.trade_route_cost,
+#         "sells": [(r.type, r.amount) for r in c.sells],
+#         "buys":  [(r.type, r.amount) for r in c.buys],
+#         # "trade_points": [(p.x, p.y) for p in c.trade_points],  # placeholder
+#     }
+
+def to_trade_route_type(text: str) -> TradeRouteType | None:
+    if not text:
+        return None
+    key = text.strip().lower()
+    mapping = {
+        "land": TradeRouteType.LAND,
+        "sea": TradeRouteType.SEA,
+    }
+    return mapping.get(key)
+
+
+# def widget_values_to_city(c: City, vals: dict) -> City:
+#     """Pure converter: widget values -> mutate the City in-place. No normalization."""
+#     c.name = vals["name"]
+#     c.x = int(vals["x"])
+#     c.y = int(vals["y"])
+#     c.type = vals["city_type"]
+#     c.trade_route_type = vals["trade_route_type"]
+#     c.trade_route_cost = int(vals["trade_route_cost"]) if vals["trade_route_cost"] is not None else None
+
+#     # rows come as [(ResourceType, amount|None), ...]
+#     c.sells = [Resource(t, a) for (t, a) in vals["sells"]]
+#     c.buys  = [Resource(t, a) for (t, a) in vals["buys"]]
+#     # c.trade_points = [TradePoint(x, y) for (x, y) in vals.get("trade_points", [])]  # placeholder
+
+#     return c
 
 
 class ResourceRow(QWidget):
@@ -80,6 +127,79 @@ class DynamicList:
         self._append_row("NONE")                      # initial row defaults to NONE
         self.list.setSelectionMode(QAbstractItemView.NoSelection)   # no row selection
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)            # no focus border on the list
+
+    def clear(self):
+        for i in reversed(range(self.list.count())):
+            it = self.list.takeItem(i)
+            w = self.list.itemWidget(it)
+            if w:
+                w.deleteLater()
+            del it
+        self._item_for.clear()
+        self._timers.clear()
+        self.available_resources = list(self.resources_all)
+    
+    def load_from_resources(self, res_list: list[Resource], ours: bool):
+        """Populate rows from Resource dataclasses."""
+        self.clear()
+        # start with a first row if empty
+        if self.list.count() == 0:
+            self._append_row("NONE")
+    
+        # consume specified resources in enum order for tidiness
+        pairs = [(enum_text(r.type), r.amount) for r in res_list]
+        pairs.sort(key=lambda t: self.resource_order.get(t[0], 9999))
+    
+        # set rows
+        if pairs:
+            # re-use first row
+            first_name, first_amt = pairs[0]
+            # consume from pool so combos de-duplicate correctly
+            if first_name in self.available_resources:
+                self.available_resources.remove(first_name)
+            row0 = self.list.itemWidget(self.list.item(0))
+            row0.combo.blockSignals(True)
+            row0.combo.setCurrentText(first_name)
+            row0._last_value = first_name
+            row0.combo.blockSignals(False)
+            if hasattr(row0, "spin"):
+                row0.spin.setValue(0 if first_amt is None else int(first_amt))
+    
+            # append the rest
+            for name, amount in pairs[1:]:
+                r = self._append_row(name)
+                # consume from pool
+                if name in self.available_resources:
+                    self.available_resources.remove(name)
+                if hasattr(r, "spin"):
+                    r.spin.setValue(0 if amount is None else int(amount))
+    
+        # ensure trailing addable row
+        last = self.list.itemWidget(self.list.item(self.list.count() - 1))
+        if last and getattr(last, "_last_value", "NONE") != "NONE":
+            self._append_row("NONE")
+    
+        # spins visibility
+        self.set_spins_visible(not ours)
+        self._refresh_all_combos()
+    
+    def to_resources(self, ours: bool) -> list[Resource]:
+        """Extract Resource dataclasses from current rows."""
+        out = []
+        for i in range(self.list.count()):
+            w = self.list.itemWidget(self.list.item(i))
+            if not isinstance(w, ResourceRow):
+                continue
+            name = w.combo.currentText()
+            if name == "NONE":
+                continue
+            rtype = ResourceType(name)  # let this raise if inconsistent
+            amount = None if ours else int(w.spin.value())
+            # for non-OURS, optional: skip zeroes
+            if not ours and amount == 0:
+                continue
+            out.append(Resource(rtype, (1 if ours else amount or 1)))
+        return out
 
     def add_empty_if_needed(self, row_widget: ResourceRow):
         last_idx = self.list.count() - 1
@@ -211,15 +331,26 @@ class DynamicList:
 # --- main dialog -----------------------------------------------------------
 
 class CityPropertiesDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self,city: City, parent=None):
         super().__init__(parent)
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
-
+        
         # Cache references to the relevant UI bits
-        self._type_combo = getattr(self.ui, "comboBox", None)        # top "Type" combobox
-        self._trade_group = getattr(self.ui, "groupBox_2", None)     # likely "Trade Route" group box
-        self.current_city_type = None
+        # Exact bindings (from your retranslateUi)
+        self._type_combo       = self.ui.comboBox          # "Type"
+        self.current_city_type = self._type_combo #hack
+        self._route_type_combo = self.ui.comboBox_2        # "Trade Route > Type"
+        self._route_cost_spin  = self.ui.spinBox  # adjust if your objectName differs
+        self._name_edit        = self.ui.lineEdit          # "Name"
+        self._button_box       = self.ui.buttonBox
+        self._trade_group      = self.ui.groupBox_2        # "Trade Route"
+        self._lists_group      = self.ui.groupBox          # "Trade" group (Sells/Buys)
+        self.city = city
+        # atm no X/Y widgets in this dialog
+        self._x_spin = None
+        self._y_spin = None
+        
         res_names = enum_strings(ResourceType)
         self.sells = DynamicList(self.ui.listWidgetSells, res_names, self)
         self.buys  = DynamicList(self.ui.listWidgetBuys, res_names, self)
@@ -231,22 +362,8 @@ class CityPropertiesDialog(QDialog):
             self.on_city_type_changed(self._type_combo.currentText())
             self.current_city_type = CityType(self._type_combo.currentText().lower()) #cast from text to class object
 
-        # self.buyList = QListWidget(self.ui.verticalLayoutWidget)
-        # vlay = self.ui.verticalLayout
-        # idx = vlay.indexOf(self.ui.listView)
-        # vlay.removeWidget(self.ui.listView)
-        # self.ui.listView.setParent(None)
-        
-        # vlay.insertWidget(idx, self.buyList)
-        # Collect resource names
-
-
-        # Controllers for Sells and Buys
-
         self.ui.comboBox_2.setStyleSheet("")  # clear custom styles
-        print(self.ui.groupBox_2.isEnabled())
-        print("Enabled:", self.ui.comboBox_2.isEnabled())
-        print("Palette role:", self.ui.comboBox_2.palette().color(QPalette.ColorRole.Base))
+
         self.ui.comboBox_2.setAutoFillBackground(False)
         self.ui.comboBox_2.setPalette(QApplication.palette())  # reset to default app palette
         self.setStyleSheet("""
@@ -257,6 +374,87 @@ class CityPropertiesDialog(QDialog):
         # Optional: set sensible widths
         self.ui.listWidgetSells.setUniformItemSizes(False)
         self.ui.listWidgetBuys.setUniformItemSizes(False)
+        # ADD at the end of __init__ (after your styling and list setup)
+        self._load_city_into_widgets()
+       
+        self.requested_route_draw = False
+        self.ui.pushButton.clicked.connect(self.draw_trade_route)
+        # If your buttonBox exists, wire OK/Cancel to accept/reject
+        #if self.ui.buttonBox:
+           # self.ui.buttonBox.accepted.connect(self.accept)
+            #self.ui.buttonBox.rejected.connect(self.reject)
+        
+
+        self.result_city: City | None = None
+        
+            
+    def _load_city_into_widgets(self):
+        c = self.city
+    
+        # basics
+        if self._name_edit:
+            self._name_edit.setText(c.name)
+    
+        # city type (store enums in userData; select by enum)
+        if self._type_combo:
+            block = self._type_combo.blockSignals(True)
+            self._type_combo.clear()
+            for ct in CityType:
+                self._type_combo.addItem(enum_text(ct).capitalize(), ct)
+            idx = self._type_combo.findData(c.type)
+            if idx >= 0:
+                self._type_combo.setCurrentIndex(idx)
+            self._type_combo.blockSignals(block)
+            self.on_city_type_changed(self._type_combo.currentText())
+    
+        # trade route
+        if self._route_type_combo:
+            block = self._route_type_combo.blockSignals(True)
+            self._route_type_combo.clear()
+            for rt in TradeRouteType:
+                self._route_type_combo.addItem(enum_text(rt).capitalize(), rt)
+            if c.trade_route:
+                idx = self._route_type_combo.findData(c.trade_route.type)
+                if idx >= 0:
+                    self._route_type_combo.setCurrentIndex(idx)
+                if self._route_cost_spin:
+                    self._route_cost_spin.setValue(int(c.trade_route.cost))
+            self._route_type_combo.blockSignals(block)
+    
+        # resources
+        ours = (c.type == CityType.OURS)
+        self.sells.load_from_resources(c.sells, ours=ours)
+        self.buys.load_from_resources(c.buys, ours=False)
+
+    def widget_values_to_city(self) -> City:
+        c = self.city  # mutate the exact instance
+    
+        # basics
+        c.name = self._name_edit.text()
+        # no X/Y widgets in this dialog; keep existing coords
+        c.type = self._type_combo.currentData() or to_city_type(self._type_combo.currentText())
+    
+        # trade route (optional). Preserve existing points until you add a UI.
+        if self.ui.groupBox_2.isVisible():
+            tr_type = self._route_type_combo.currentData() or to_trade_route_type(self._route_type_combo.currentText())
+            tr_cost = int(self._route_cost_spin.value())
+            existing_pts = c.trade_route.trade_points if c.trade_route else []
+            c.trade_route = TradeRoute(cost=tr_cost, type=tr_type, trade_points=list(existing_pts))
+        else:
+            c.trade_route = None
+    
+        # resources (DynamicList already returns Resource objects)
+        ours = (c.type == CityType.OURS)
+        c.sells = self.sells.to_resources(ours)
+        c.buys  = self.buys.to_resources(False)
+        return c
+
+    def draw_trade_route(self):
+        self.requested_route_draw = True
+        self.accept()
+    def accept(self):
+        self.result_city = self.widget_values_to_city()
+        super().accept()
         
     def on_city_type_changed(self, text: str):
         """Show trade route UI only if city type is TRADE."""
@@ -285,7 +483,7 @@ class CityPropertiesDialog(QDialog):
 if __name__ == "__main__":
 
     app = QApplication.instance() or QApplication([])
-    dlg = CityPropertiesDialog()
+    dlg = CityPropertiesDialog(City())
     dlg.show()
     """
     DEBUGGING COMMANDS FOR PREVIEWING:

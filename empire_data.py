@@ -107,27 +107,28 @@ class TradePoint:
     """<point x="" y=""> inside <trade_points>"""
     x: int
     y: int
+    
+@dataclass
+class TradeRoute:
+    cost: int
+    type: TradeRouteType
+    trade_points: List[TradePoint] = field(default_factory=list)
 
 
 @dataclass
 class City:
     """<city ...> with optional <buys>, <sells>, <trade_points>"""
-    name: str
-    x: int
-    y: int
+    name: str = "City Name"
+    x: int = 0
+    y: int = 0
     type: CityType = CityType.TRADE
-    trade_route_cost: Optional[int] = 500         # only for trade cities; defaults to 500
-    trade_route_type: TradeRouteType = TradeRouteType.LAND
+    trade_route: Optional[TradeRoute] = None  # <- replaces cost/type/points on City
     buys: List[Resource] = field(default_factory=list)
     sells: List[Resource] = field(default_factory=list)
-    trade_points: List[TradePoint] = field(default_factory=list)
 
     def __post_init__(self):
-        # If it's our city, <sells> list is required to define what we can produce.
         if self.type == CityType.OURS and not self.sells:
-            # Keep it soft: you may prefer to just allow empty and validate later during export.
             pass
-        # For non-trade cities, trade route attributes are irrelevant; leave as-is or clear on export.
 
 
 @dataclass
