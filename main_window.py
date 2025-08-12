@@ -229,9 +229,23 @@ class MainWindow(QMainWindow):
         self.trade_drawing_line_items = []      # temp visual lines during drawing
         self.trade_temp_line_item = None        # rubber band line
         self.trade_route_city = None            # city being edited
-        
+
+        # Trade route selection state (similar to border selection)
+        self.trade_route_selected = False
+        self.selected_trade_route_city = None
+        self.trade_route_sel_line_items = []      # QGraphicsLineItem[] for dotted lines
+        self.trade_route_sel_handle_items = []    # QGraphicsRectItem[] for white squares
+        self.trade_route_hit_items = []           # Invisible hit areas for trade route segments
         # Permanent rendered trade routes (keyed by city index)
         self._trade_route_groups = {}  # {city_index: QGraphicsItemGroup}
+        
+        # Vertex editing state - unified for both trade routes and empire borders
+        self.vertex_editing_active = False      # True when dragging a vertex
+        self.editing_vertex_type = None         # "TRADE_ROUTE" or "EMPIRE_BORDER"
+        self.editing_vertex_index = None        # Index of the vertex being edited
+        self.editing_vertex_city = None         # City object (for trade routes only)
+        self.editing_vertex_handle = None       # The handle item being dragged
+        self.vertex_handle_items = []           # List of active vertex handles
         
         # Data/state
         self.state = ProgramState()
@@ -283,6 +297,12 @@ class MainWindow(QMainWindow):
                 ("Toggle Edge Hidden", lambda it: self.toggle_edge_hidden_from_item(it)),
                 ("Delete Border", self.delete_empire_border),
             ],
+            
+            # Add trade route context menu
+            "TRADE_ROUTE": [
+                ("Delete Trade Route Path", lambda it: self.delete_trade_route_from_item(it)),
+                ("Edit City", lambda it: self.edit_city_from_trade_route_item(it)),
+            ],
         }
     def _init_cursor_pixmaps(self):
         """Initialize cursor pixmaps once at startup for drawing modes."""
@@ -317,7 +337,31 @@ class MainWindow(QMainWindow):
             return empire.cities.index(city)
         except ValueError:
             return None
+    def delete_trade_route_from_item(self, item):
+        """Delete trade route path from context menu selection."""
+        city_index = item.data(Qt.UserRole + 1)
+        city = self._get_city_by_index(city_index)
+        if city and city.trade_route and city.trade_route.trade_points:
+            resp = QMessageBox.question(
+                self, "Delete Trade Route",
+                f"Delete trade route path for {city.name}?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if resp == QMessageBox.Yes:
+                # Clear selection if this was the selected route
+                if self.selected_trade_route_city == city:
+                    self.clear_trade_route_selection_overlay()
+                # Clear only the plotted path, keep the trade route object
+                city.trade_route.trade_points.clear()
+                self.clear_trade_route_visuals(city_index)
 
+    def edit_city_from_trade_route_item(self, item):
+        """Edit city from trade route context menu selection."""
+        city_index = item.data(Qt.UserRole + 1)
+        city = self._get_city_by_index(city_index)
+        if city:
+            self._edit_city(city)
     def _get_city_center(self, city):
         """Get the center coordinates of a city icon."""
         city_pixmap = self._pixmap_for_city(city)
@@ -349,35 +393,28 @@ class MainWindow(QMainWindow):
             return None
         return empire.cities[index]
     
-    def set_drawing_cursor(self, enable: bool):
-        """Unified cursor management for all drawing modes."""
+    def set_drawing_cursor(self, enable: bool, pixmap=None):
+        """Unified cursor management for all modes."""
+        widgets = (self, self.ui.graphicsView, self.ui.graphicsView.viewport())
         if not enable:
-            # Reset to default cursor when disabled
-            for w in (self, self.ui.graphicsView, self.ui.graphicsView.viewport()):
-                try:
-                    w.unsetCursor()
-                except Exception:
-                    pass
+            for w in widgets: 
+                try: w.unsetCursor()
+                except: pass
             return
-        # Determine which cursor to use based on active drawing mode
-        cursor_pixmap = None
-        if self.edge_drawing_active:
-            cursor_pixmap = self.edge_cursor_pixmap
-        elif self.trade_drawing_active:
-            cursor_pixmap = self.land_cursor_pixmap if self.trade_is_land else self.sea_cursor_pixmap
-        try:
-            cursor = QCursor(cursor_pixmap, 0, 0)
-            self.setCursor(cursor)
-            self.ui.graphicsView.setCursor(cursor)
-            self.ui.graphicsView.viewport().setCursor(cursor)
-        except:
-            # Fallback to default if no valid cursor pixmap
-            print("FEKING CURSOR ERROR")
-            for w in (self, self.ui.graphicsView, self.ui.graphicsView.viewport()):
-                try:
-                    w.unsetCursor()
-                except Exception:
-                    pass
+        
+        # Use provided pixmap or determine from drawing mode
+        if not pixmap:
+            if self.edge_drawing_active: pixmap = self.edge_cursor_pixmap
+            elif self.trade_drawing_active: pixmap = self.land_cursor_pixmap if self.trade_is_land else self.sea_cursor_pixmap
+        
+        if pixmap:
+            try:
+                cursor = QCursor(pixmap, 0, 0)
+                for w in widgets: w.setCursor(cursor)
+            except:
+                for w in widgets: 
+                    try: w.unsetCursor()
+                    except: pass
 # %% GLOBAL EVENT FILTER
     def eventFilter(self, obj, event):
         et = event.type()
@@ -393,14 +430,42 @@ class MainWindow(QMainWindow):
     
         elif et in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
             return self._handle_mouse_click(event)
+            
+        elif et == QEvent.KeyPress:
+            return self._handle_key_press(event)
     
         return QObject.eventFilter(self, obj, event)
+    
+    def _handle_key_press(self, event):
+        """Handle keyboard events for vertex editing and other shortcuts."""
+        key = event.key()
+        
+        # Escape key cancels various operations
+        if key == Qt.Key_Escape:
+            if self.vertex_editing_active:
+                self.cancel_vertex_editing()
+                return True
+            elif self.edge_drawing_active:
+                self._edge_prompt_incomplete()
+                return True
+            elif self.trade_drawing_active:
+                self._abort_trade_drawing()
+                return True
+        
+        # Backspace/Delete for undo in drawing modes
+        elif key in (Qt.Key_Backspace, Qt.Key_Delete):
+            if self.trade_drawing_active:
+                self._trade_undo_last_point()
+                return True
+        
+        return False  # Don't consume other keys
+
     # =========================
     # HELPER HANDLERS
     # =========================
 
     def _handle_mouse_move(self, event):
-        """Mouse move: update label, dragging icon, and edge preview."""
+        """Mouse move: update label, dragging icon, vertex editing, and edge preview."""
         gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
         view = self.ui.graphicsView
         vp = view.viewport()
@@ -409,7 +474,11 @@ class MainWindow(QMainWindow):
         # Update position label
         if vp.rect().contains(vp_pos):
             scene_pos = view.mapToScene(vp_pos)
-            if self.edge_drawing_active:
+            
+            # Handle vertex editing
+            if self.vertex_editing_active:
+                self.update_vertex_position(scene_pos)
+            elif self.edge_drawing_active:
                 self._edge_update_temp_line(scene_pos)
             elif self.trade_drawing_active:
                 self._trade_update_temp_line(scene_pos)
@@ -424,13 +493,25 @@ class MainWindow(QMainWindow):
         return False  # don't consume
     
     def _handle_mouse_click(self, event):
-        """Mouse clicks: route to drag, edge drawing, or selection logic."""
+        """Mouse clicks: route to drag, edge drawing, vertex editing, or selection logic."""
         gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
         view = self.ui.graphicsView
         vp = view.viewport()
         inside_view = vp.rect().contains(vp.mapFromGlobal(gp))
-        #btn = event.button()
+        btn = event.button()
         et = event.type()
+    
+        # Vertex editing mode
+        if self.vertex_editing_active and et == QEvent.MouseButtonPress:
+            if btn == Qt.RightButton:
+                # Right-click cancels vertex editing
+                self.cancel_vertex_editing()
+                return True
+            elif btn == Qt.LeftButton:
+                # Left-click finishes vertex editing
+                scene_pos = view.mapToScene(vp.mapFromGlobal(gp))
+                self.finish_vertex_editing(scene_pos)
+                return True  # Consume the event
     
         # Dragging mode
         if self.is_dragging:
@@ -547,15 +628,41 @@ class MainWindow(QMainWindow):
         """
         # Clear ALL previous selection states
         self.clear_border_selection_overlay()
+        self.clear_trade_route_selection_overlay()
         self.deselect_city_marker()
         self.border_selected = False
         self.selected_item = None
-    
+
+        # Trade route segment hit
+        if hasattr(item, "data") and callable(item.data):
+            route_type = item.data(Qt.UserRole)
+            if route_type == "TRADE_ROUTE":
+                city_index = item.data(Qt.UserRole + 1)
+                city = self._get_city_by_index(city_index)
+                if city:
+                    self.select_trade_route_overlay(city)
+                    self.selected_item = item
+                    # Create vertex handles for editing
+                    if city.trade_route and city.trade_route.trade_points:
+                        pts = [(p.x, p.y) for p in city.trade_route.trade_points]
+                        self.create_vertex_handles("TRADE_ROUTE", pts, city)
+                    return
+            
+            # Vertex handle selection
+            if route_type == "VERTEX_HANDLE":
+                self.start_vertex_editing(item)
+                return
+
         # Edge segment (hit proxy)
         if item in self.border_edge_hit_items:
-            self.selected_edge_index = item.data(Qt.UserRole + 1)  # i for edge i -> i+1
-            self.select_empire_border_overlay()  # keep your selection visuals
+            self.selected_edge_index = item.data(Qt.UserRole + 1)
+            self.select_empire_border_overlay()
             self.selected_item = item
+            # Create vertex handles for border editing
+            empire = self.state.current_empire_object
+            if empire and empire.border and empire.border.edges:
+                pts = [(edge.x, edge.y) for edge in empire.border.edges]
+                self.create_vertex_handles("EMPIRE_BORDER", pts)
             return
         
         # (optional: keep vertex/icon handling if you still want it)
@@ -564,7 +671,6 @@ class MainWindow(QMainWindow):
             self.selected_item = item
             return
 
-            
         # City markers
         if hasattr(item, "data") and callable(item.data):
             city_obj = item.data(1)
@@ -628,7 +734,7 @@ class MainWindow(QMainWindow):
         self.current_icon.setFixedSize(pixmap.size())
         self.current_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.is_dragging = True
-        self.set_cursor_to_icon(pixmap)
+        self.set_drawing_cursor(True, pixmap)
         self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)
         
         self._apply_interactivity_to_all(False)
@@ -640,7 +746,7 @@ class MainWindow(QMainWindow):
         # keep self.selected_kind intact so drop handler knows what was chosen
         self.selected_item = None
         self.is_dragging = False
-        self.reset_cursor()
+        self.set_drawing_cursor(False)
         self.ui.graphicsView.setInteractive(True)
 
         self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)  # not ScrollHandDrag
@@ -651,6 +757,8 @@ class MainWindow(QMainWindow):
             
     def deselect_all(self):
         self.clear_border_selection_overlay()
+        self.clear_trade_route_selection_overlay()
+        self.clear_vertex_handles()  # Clear vertex editing handles
         self.deselect_city_marker()
         self.border_selected = False
         self.selected_item = None
@@ -658,13 +766,31 @@ class MainWindow(QMainWindow):
 
     def clear_border_selection_overlay(self):
         """Remove dotted stroke + handles if present."""
-        for it in self.border_sel_line_items:
-            self.scene.removeItem(it)
-        for it in self.border_sel_handle_items:
-            self.scene.removeItem(it)
-        self.border_sel_line_items.clear()
-        self.border_sel_handle_items.clear()
-        self.border_selected = False
+        self._clear_selection_overlay("border")
+        
+    def clear_trade_route_selection_overlay(self):
+        """Remove trade route selection visuals (dotted lines and white squares)."""
+        self._clear_selection_overlay("trade_route")
+        
+    def _clear_selection_overlay(self, overlay_type):
+        """Generic function to clear selection overlays."""
+        if overlay_type == "border":
+            items = [self.border_sel_line_items, self.border_sel_handle_items]
+            for item_list in items:
+                for it in item_list:
+                    if hasattr(it, 'scene') and it.scene() is not None:
+                        self.scene.removeItem(it)
+                item_list.clear()
+            self.border_selected = False
+        elif overlay_type == "trade_route":
+            items = [self.trade_route_sel_line_items, self.trade_route_sel_handle_items]
+            for item_list in items:
+                for it in item_list:
+                    if hasattr(it, 'scene') and it.scene() is not None:
+                        self.scene.removeItem(it)
+                item_list.clear()
+            self.trade_route_selected = False
+            self.selected_trade_route_city = None
         
         
     def remove_city(self, city):
@@ -795,18 +921,18 @@ class MainWindow(QMainWindow):
         """Show context menu based on enum stored in item."""
         if not (hasattr(item, "data") and callable(item.data)):
             return
-    
+
         obj_type = item.data(Qt.UserRole)
         if obj_type not in self.context_menu_options:
             return
-    
+
         menu = QMenu(self)
         for label, callback in self.context_menu_options[obj_type]:
             act = QAction(label, self)
-            # Pass both the scene item and its type to the callback if needed
+            # Fix lambda capture issue by using default parameter
             act.triggered.connect(lambda checked=False, cb=callback, it=item: cb(it))
             menu.addAction(act)
-    
+
         menu.exec(global_pos)
         
     def move_city(self, city_obj):
@@ -829,8 +955,24 @@ class MainWindow(QMainWindow):
         self._apply_interactivity_to_all(False)
     
         # ensure cursor persists after the context menu closes
-        QTimer.singleShot(0, lambda: self.set_cursor_to_icon(pm))
+        QTimer.singleShot(0, lambda: self.set_drawing_cursor(True, pm))
     
+    def _show_warning(self, title, message):
+        """Show a standardized warning message box."""
+        return QMessageBox.warning(self, title, message, QMessageBox.Ok)
+    
+    def _show_question(self, title, message, default_button=QMessageBox.No):
+        """Show a standardized question message box."""
+        return QMessageBox.question(
+            self, title, message,
+            QMessageBox.Yes | QMessageBox.No,
+            default_button
+        )
+    
+    def _show_no_background_warning(self):
+        """Show the standard 'no background' warning."""
+        self._show_warning("No background", "Drop onto the background image area.")
+
     def _placeholder_function(self):
         print("joke's on you, this does nothing")
     # %% General drawing
@@ -865,7 +1007,143 @@ class MainWindow(QMainWindow):
 
     # %% Edge drawing  
     # ==== small shared helpers ================================================
+    def clear_vertex_handles(self):
+        """Remove all vertex editing handles from the scene."""
+        for item in self.vertex_handle_items:
+            if hasattr(item, 'scene') and item.scene() is not None:
+                self.scene.removeItem(item)
+        self.vertex_handle_items.clear()
+        
+    def create_vertex_handles(self, vertex_type, points, city=None):
+        """Create vertex handles for editing trade routes or empire borders."""
+        self.clear_vertex_handles()
+        
+        if not points or not self.bg_item:
+            return
+        
+        handle_size = 8
+        half = handle_size / 2.0
+        
+        for i, (x, y) in enumerate(points):
+            scene_pos = self.bg_item.mapToScene(x, y)
+            
+            # Create blue square handle
+            handle = self.scene.addRect(
+                scene_pos.x() - half, scene_pos.y() - half, 
+                handle_size, handle_size,
+                QPen(Qt.blue, 1), QBrush(Qt.blue)
+            )
+            handle.setZValue(140)  # Above everything else
+            handle.setFlag(QGraphicsItem.ItemIsSelectable, True)
+            handle.setCursor(Qt.PointingHandCursor)
+            
+            # Store data for vertex editing
+            handle.setData(Qt.UserRole, "VERTEX_HANDLE")
+            handle.setData(Qt.UserRole + 1, vertex_type)  # "TRADE_ROUTE" or "EMPIRE_BORDER"
+            handle.setData(Qt.UserRole + 2, i)  # Vertex index
+            if city:
+                handle.setData(Qt.UserRole + 3, city)  # City object for trade routes
+                
+            self.vertex_handle_items.append(handle)
 
+    def start_vertex_editing(self, handle_item):
+        """Start editing a vertex by making it stick to the mouse."""
+        if self.vertex_editing_active:
+            return  # Already editing
+            
+        vertex_type = handle_item.data(Qt.UserRole + 1)
+        vertex_index = handle_item.data(Qt.UserRole + 2)
+        city = handle_item.data(Qt.UserRole + 3)  # May be None for borders
+        
+        self.vertex_editing_active = True
+        self.editing_vertex_type = vertex_type
+        self.editing_vertex_index = vertex_index
+        self.editing_vertex_city = city
+        self.editing_vertex_handle = handle_item
+        
+        # Visual feedback - make handle yellow while editing
+        handle_item.setBrush(QBrush(Qt.yellow))
+        
+        # Disable view interaction during editing
+        self.ui.graphicsView.setInteractive(False)
+
+    def update_vertex_position(self, scene_pos):
+        """Update vertex position during dragging."""
+        if not self.vertex_editing_active or not self.editing_vertex_handle:
+            return
+            
+        # Move the handle to follow the mouse
+        handle_size = 8
+        half = handle_size / 2.0
+        rect = self.editing_vertex_handle.rect()
+        rect.moveCenter(scene_pos)
+        self.editing_vertex_handle.setRect(rect)
+
+    def finish_vertex_editing(self, scene_pos):
+        """Finish vertex editing and save changes."""
+        if not self.vertex_editing_active:
+            return
+            
+        # Convert scene position to image coordinates
+        xy = self._scene_to_image_xy(scene_pos)
+        if xy is None:
+            self.cancel_vertex_editing()
+            return
+            
+        x, y = xy
+        
+        # Update the underlying data
+        if self.editing_vertex_type == "TRADE_ROUTE" and self.editing_vertex_city:
+            city = self.editing_vertex_city
+            if (city.trade_route and city.trade_route.trade_points and 
+                0 <= self.editing_vertex_index < len(city.trade_route.trade_points)):
+                # Update the trade point
+                city.trade_route.trade_points[self.editing_vertex_index].x = int(x)
+                city.trade_route.trade_points[self.editing_vertex_index].y = int(y)
+                # Re-render the trade route
+                self.render_trade_route(city)
+                # Recreate vertex handles with new positions
+                pts = [(p.x, p.y) for p in city.trade_route.trade_points]
+                self.create_vertex_handles("TRADE_ROUTE", pts, city)
+                
+        elif self.editing_vertex_type == "EMPIRE_BORDER":
+            empire = self.state.current_empire_object
+            if (empire and empire.border and empire.border.edges and 
+                0 <= self.editing_vertex_index < len(empire.border.edges)):
+                # Update the border edge
+                empire.border.edges[self.editing_vertex_index].x = int(x)
+                empire.border.edges[self.editing_vertex_index].y = int(y)
+                # Re-render the empire border
+                self.render_empire_border()
+                # Recreate vertex handles with new positions
+                pts = [(edge.x, edge.y) for edge in empire.border.edges]
+                self.create_vertex_handles("EMPIRE_BORDER", pts)
+        
+        # Reset editing state
+        self.vertex_editing_active = False
+        self.editing_vertex_type = None
+        self.editing_vertex_index = None
+        self.editing_vertex_city = None
+        self.editing_vertex_handle = None
+        self.ui.graphicsView.setInteractive(True)
+
+    def cancel_vertex_editing(self):
+        """Cancel vertex editing without saving changes."""
+        if not self.vertex_editing_active:
+            return
+            
+        # Restore original handle color
+        if self.editing_vertex_handle:
+            self.editing_vertex_handle.setBrush(QBrush(Qt.blue))
+        
+        # Reset editing state
+        self.vertex_editing_active = False
+        self.editing_vertex_type = None
+        self.editing_vertex_index = None
+        self.editing_vertex_city = None
+        self.editing_vertex_handle = None
+        self.ui.graphicsView.setInteractive(True)
+        
     def _trade_update_temp_line(self, cursor_scene_pos):
         if not self.trade_drawing_active or self.trade_temp_line_item is None or not self.trade_drawing_points or self.bg_item is None:
             return
@@ -934,7 +1212,6 @@ class MainWindow(QMainWindow):
         
         # Update temp line origin
         self._trade_create_temp_line()
-
     def _trade_hit_existing_point(self, x_img: int, y_img: int):
         eps = self.edge_hit_epsilon  # reuse your epsilon
         for idx, (px, py) in enumerate(self.trade_drawing_points):
@@ -1108,17 +1385,87 @@ class MainWindow(QMainWindow):
     
     def clear_trade_route_visuals(self, city_index: int):
         """Remove visual elements for a specific city's trade route."""
+        # Clear selection if this route is selected
+        if (self.trade_route_selected and 
+            self.selected_trade_route_city and 
+            self._get_city_index(self.selected_trade_route_city) == city_index):
+            self.clear_trade_route_selection_overlay()
+        
+        # Remove the group and all its items
         if city_index in self._trade_route_groups:
             group = self._trade_route_groups[city_index]
-            self.scene.removeItem(group)
+            if group.scene() is not None:  # Defensive check
+                self.scene.removeItem(group)
             del self._trade_route_groups[city_index]
+            
+        # Remove hit items for this city's trade route - more robust cleanup
+        items_to_remove = []
+        for item in self.trade_route_hit_items:
+            if hasattr(item, 'data') and callable(item.data) and item.data(Qt.UserRole + 1) == city_index:
+                items_to_remove.append(item)
+        
+        for item in items_to_remove:
+            self.trade_route_hit_items.remove(item)
+            # Items are already removed with the group, no need to remove from scene again
 
     def clear_all_trade_route_visuals(self):
         """Remove all permanent trade route visuals."""
         for group in self._trade_route_groups.values():
             self.scene.removeItem(group)
         self._trade_route_groups.clear()
+        
+        # Clear all hit items
+        self.trade_route_hit_items.clear()
+        
+        # Clear selection if any trade route is selected
+        if self.trade_route_selected:
+            self.clear_trade_route_selection_overlay()
 
+    def clear_trade_route_selection_overlay(self):
+        """Remove trade route selection visuals (dotted lines and white squares)."""
+        self._clear_selection_overlay("trade_route")
+
+    def select_trade_route_overlay(self, city):
+        """Show selection overlay for a trade route (dotted lines + white squares)."""
+        if not city or not city.trade_route or not city.trade_route.trade_points or len(city.trade_route.trade_points) < 2:
+            return
+        
+        # Ensure background item exists before proceeding
+        if self.bg_item is None:
+            return
+            
+        self.clear_trade_route_selection_overlay()
+        
+        pts = [(p.x, p.y) for p in city.trade_route.trade_points]
+        
+        # Draw dotted outline for each segment
+        for i in range(len(pts) - 1):
+            x0, y0 = pts[i]
+            x1, y1 = pts[i + 1]
+            p0 = self.bg_item.mapToScene(x0, y0)
+            p1 = self.bg_item.mapToScene(x1, y1)
+            
+            pen = QPen(QColor(255, 140, 0) if city.trade_route.type == ed.TradeRouteType.LAND else Qt.cyan, 2)
+            pen.setStyle(Qt.DotLine)
+            
+            seg = self.scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
+            seg.setZValue(120)  # Above everything else
+            self.trade_route_sel_line_items.append(seg)
+        
+        # Add white square handles at vertices
+        handle_size = 6
+        half = handle_size / 2.0
+        hpen = QPen(Qt.black, 1)
+        hbrush = QBrush(Qt.white)
+        for x, y in pts:
+            p = self.bg_item.mapToScene(x, y)
+            rect = self.scene.addRect(p.x() - half, p.y() - half, handle_size, handle_size, hpen, hbrush)
+            rect.setZValue(130)  # Above dotted lines
+            self.trade_route_sel_handle_items.append(rect)
+        
+        self.trade_route_selected = True
+        self.selected_trade_route_city = city
+        
     def render_trade_route(self, city):
         """Render permanent trade route visuals for a specific city."""
         city_index = self._get_city_index(city)
@@ -1146,7 +1493,20 @@ class MainWindow(QMainWindow):
             def place_trade_dot(x, y):
                 self._place_pixmap(x, y, dot_pm, z=5, group=group, center=True)
             self._stamp_along_polyline(pts, spacing=7.0, place_cb=place_trade_dot, include_ends=True)
-    
+        
+        # Add invisible hit areas for each segment (similar to border)
+        for i in range(len(pts) - 1):
+            p0 = self._img_to_scene(pts[i][0], pts[i][1])
+            p1 = self._img_to_scene(pts[i+1][0], pts[i+1][1])
+            hit = QGraphicsLineItem(p0.x(), p0.y(), p1.x(), p1.y())
+            hit.setPen(QPen(Qt.transparent, 12))  # Wide invisible hit area
+            hit.setZValue(6)  # Above trade dots but below selection
+            hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
+            hit.setData(Qt.UserRole, "TRADE_ROUTE")  # Mark as trade route
+            hit.setData(Qt.UserRole + 1, city_index)  # Store city index
+            hit.setData(Qt.UserRole + 2, i)  # Store segment index
+            group.addToGroup(hit)
+            self.trade_route_hit_items.append(hit)
     # ==== edge/border drawing (temp) ===========================================
     
     def _begin_edge_drawing(self, x_img: int, y_img: int):
@@ -1327,7 +1687,7 @@ class MainWindow(QMainWindow):
     def start_trade_route(self, city):
         """Start drawing a trade route for a specific city."""
         if self.bg_item is None:
-            QMessageBox.warning(self, "No background", "Drop onto the background image area.", QMessageBox.Ok)
+            self._show_no_background_warning()
             return
 
         # Clear any existing drawing session
@@ -1474,7 +1834,7 @@ class MainWindow(QMainWindow):
     
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
-            QMessageBox.warning(self, "No background", "Drop onto the background image area.", QMessageBox.Ok)
+            self._show_no_background_warning()
             return
         x, y = xy
         
@@ -1841,6 +2201,9 @@ class MainWindow(QMainWindow):
     
         self.scene.clear()
         self.bg_item = None
+        
+        # Clear all trade route state when scene is cleared
+        self._clear_scene_state()
 
         self.no_bg_item = None
         self.bg_item = QGraphicsPixmapItem(pixmap)
@@ -1851,29 +2214,7 @@ class MainWindow(QMainWindow):
         self.remove_no_background_message()
         if self.empire_border and getattr(self.state.current_empire_object, "border", None):
             self.render_empire_border()
-    def set_cursor_to_icon(self, pixmap):
-        """
-        Set the cursor to the custom icon on *all* relevant widgets so the
-        viewport can't revert it to Arrow while dragging.
-        """
-        cursor = QCursor(pixmap, 0, 0)  # hotspot at (0,0)
     
-        # Apply to the main window, view, and the viewport
-        self.setCursor(cursor)
-        self.ui.graphicsView.setCursor(cursor)
-        self.ui.graphicsView.viewport().setCursor(cursor)
-
-    def reset_cursor(self):
-        """
-        Reset cursors back to default on all widgets touched above.
-        Use unsetCursor() so they inherit normally again.
-        """
-        for w in (self, self.ui.graphicsView, self.ui.graphicsView.viewport()):
-            try:
-                w.unsetCursor()
-            except Exception:
-                pass
-
     def on_default_empire_map_selected(self):
         if "The_empire" in self.state.images:
             empire_image = self.state.images["The_empire"]
@@ -1885,6 +2226,42 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing Map",
                                 "The 'Default Empire Map' is not available in the loaded images.",
                                 QMessageBox.Ok)
+
+    def _clear_scene_state(self):
+        """Clear all scene-related state when scene is cleared or reset."""
+        # Clear selection state
+        self.selected_item = None
+        self.selected_kind = None
+        self.selected_edge_index = None
+        self.selected_trade_route_city = None
+        
+        # Clear edge drawing state
+        self.edge_drawing_active = False
+        self.edge_points_img = []
+        self.edge_point_items = []
+        self.edge_line_items = []
+        self.edge_temp_line_item = None
+        
+        # Clear trade route drawing state
+        self.trade_drawing_active = False
+        self.trade_drawing_points = []
+        self.trade_drawing_point_items = []
+        self.trade_drawing_line_items = []
+        self.trade_temp_line_item = None
+        self.trade_route_city = None
+        self.trade_route_selected = False
+        self.trade_route_sel_line_items = []
+        self.trade_route_sel_handle_items = []
+        self.trade_route_hit_items = []
+        
+        # Clear vertex editing state
+        self.vertex_editing_active = False
+        self.vertex_handle_items = []
+        
+        # Clear visual overlays (call the actual clear functions)
+        self.clear_border_selection_overlay()
+        self.clear_trade_route_selection_overlay()
+        # Note: clear_vertex_handles() is called by deselect_all() if needed
 
     def pil_to_qpixmap(self, pil_img):
         if pil_img.mode != "RGBA":
@@ -1908,6 +2285,10 @@ class MainWindow(QMainWindow):
         pixmap = QPixmap(file_path)
         self.state.selected_empire_image = pixmap
         self.scene.clear()
+        
+        # Clear all trade route state when scene is cleared
+        self._clear_scene_state()
+        
         self.no_bg_item = None
         self.bg_item = QGraphicsPixmapItem(pixmap)
         self.bg_item.setZValue(-1000)  # keep it behind markers
@@ -1949,7 +2330,7 @@ class MainWindow(QMainWindow):
     def handle_city_drop(self, scene_pos):
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
-            QMessageBox.warning(self, "No background", "Drop onto the background image area.", QMessageBox.Ok)
+            self._show_no_background_warning()
             return
         x, y = xy
 
