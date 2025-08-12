@@ -319,13 +319,28 @@ class MainWindow(QMainWindow):
             return None
 
     def _get_city_center(self, city):
-        """Get the center coordinates of a city's icon."""
+        """Get the center coordinates of a city icon."""
+        city_pixmap = self._pixmap_for_city(city)
+        center_x = city.x + city_pixmap.width() // 2
+        center_y = city.y + city_pixmap.height() // 2
+        return center_x, center_y
+
+    def _trade_route_ends_at_city(self, trade_route, city):
+        """Check if a trade route ends at the specified city (last point within city bounds)."""
+        if not trade_route or not trade_route.trade_points or len(trade_route.trade_points) < 1:
+            return False
+        
+        # Get the last trade point
+        last_point = trade_route.trade_points[-1]
+        
+        # Get city bounds
         city_pixmap = self._pixmap_for_city(city)
         city_width = city_pixmap.width()
         city_height = city_pixmap.height()
-        center_x = city.x + city_width // 2
-        center_y = city.y + city_height // 2
-        return center_x, center_y
+        
+        # Check if last point is within city icon bounds
+        return (city.x <= last_point.x <= city.x + city_width and 
+                city.y <= last_point.y <= city.y + city_height)
 
     def _get_city_by_index(self, index: int):
         """Get city by index from current empire's cities list."""
@@ -1588,11 +1603,26 @@ class MainWindow(QMainWindow):
                 x, y = xy
                 self._remove_city_marker(city)
                 
+                # Store old position for comparison
+                old_x, old_y = city.x, city.y
+                
+                # If this is "Our City", find all trade routes that end at it BEFORE moving
+                affected_cities = []
+                if city.type == ed.CityType.OURS:
+                    empire = self.state.current_empire_object
+                    if empire and hasattr(empire, 'cities'):
+                        for other_city in empire.cities:
+                            if (other_city != city and 
+                                other_city.trade_route and 
+                                self._trade_route_ends_at_city(other_city.trade_route, city)):
+                                affected_cities.append(other_city)
+                
+                # Now update the city position
+                city.x, city.y = x, y
+                
                 # Update trade route if city has one
                 if city.trade_route and city.trade_route.trade_points:
                     # Get new center coordinates
-                    old_x, old_y = city.x, city.y
-                    city.x, city.y = x, y  # Update position first
                     center_x, center_y = self._get_city_center(city)
                     
                     # Insert new center point at the beginning of trade route
@@ -1601,8 +1631,18 @@ class MainWindow(QMainWindow):
                     
                     # Re-render the trade route
                     self.render_trade_route(city)
-                else:
-                    city.x, city.y = x, y
+                
+                # Update all affected trade routes that ended at the old Our City position
+                if affected_cities:
+                    new_center_x, new_center_y = self._get_city_center(city)
+                    
+                    for other_city in affected_cities:
+                        # Add new endpoint to match new Our City position
+                        new_endpoint = ed.TradePoint(x=new_center_x, y=new_center_y)
+                        other_city.trade_route.trade_points.append(new_endpoint)
+                        
+                        # Re-render the updated trade route
+                        self.render_trade_route(other_city)
                 
                 self._place_city_marker(city, x, y)
             return
