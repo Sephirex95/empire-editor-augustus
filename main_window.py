@@ -2542,13 +2542,34 @@ class MainWindow(QMainWindow):
         """Handle the New Empire action by showing the image selection dialog."""
         dialog = ImageSelectionDialog(self)
         
-        if dialog.exec() == QDialog.accepted:
+        if dialog.exec() == QDialog.Accepted:
             selected_image = dialog.get_selected_image()
             if selected_image:
                 # Clear current empire data and set new background
                 self.clear_empire_data()
-                pil_image = Image.open(selected_image)  # Ensure the image is valid
-                self.set_background_image(pil_image)
+                
+                # Load image as QPixmap directly (same as working set_background_image)
+                pixmap = QPixmap(selected_image)
+                if pixmap.isNull():
+                    QMessageBox.warning(self, "Invalid Image", 
+                                       f"Could not load image file:\n{selected_image}")
+                    return
+                
+                # Store the pixmap and set background (same as working method)
+                self.state.selected_empire_image = pixmap
+                self.scene.clear()
+                self.bg_item = None
+                
+                # Clear all trade route state when scene is cleared
+                self._clear_scene_state()
+                
+                self.no_bg_item = None
+                self.bg_item = QGraphicsPixmapItem(pixmap)
+                self.bg_item.setZValue(-1000)  # keep it behind markers
+                self.scene.addItem(self.bg_item)
+                self.scene.setSceneRect(pixmap.rect())
+                self.ui.graphicsView.setEnabled(True)
+                self.remove_no_background_message()
                 
                 # Update window title to indicate new file
                 self.setWindowTitle("Empire Editor - New Empire")
@@ -2556,58 +2577,14 @@ class MainWindow(QMainWindow):
     def clear_empire_data(self):
         """Clear all current empire data for a new empire."""
         # Clear the empire data
-        if hasattr(self, 'state'):
-            self.state.empire_objects.clear()
-            self.state.empire_cities.clear()
+        if self.state.current_empire_object:
+            self.state.current_empire_object.clear()
+        #self.state.empire_cities.clear()
             
-        # Clear the graphics scene
-        if hasattr(self, 'scene') and self.scene:
-            # Remove all items except the background
-            for item in self.scene.items():
-                if not isinstance(item, QGraphicsPixmapItem) or item != getattr(self, 'background_item', None):
-                    self.scene.removeItem(item)
-                    
-        # Clear the list widget
+        # Clear the list widget and re-add template icons
         self.ui.listWidget.clear()
         self.add_city_icons_to_list()  # Re-add the template icons
         
-    # def set_background_image_from_path(self, image_path):
-    #     """Set background image from a file path."""
-    #     if not os.path.exists(image_path):
-    #         QMessageBox.warning(self, "Image Not Found", 
-    #                            f"Could not find image file:\n{image_path}")
-    #         return
-            
-    #     try:
-    #         pixmap = QPixmap(image_path)
-    #         if pixmap.isNull():
-    #             QMessageBox.warning(self, "Invalid Image", 
-    #                                f"Could not load image file:\n{image_path}")
-    #             return
-                
-    #         # Set up the scene and background
-    #         if not hasattr(self, 'scene') or not self.scene:
-    #             self.scene = QGraphicsScene()
-    #             self.ui.graphicsView.setScene(self.scene)
-            
-    #         # Remove existing background if any
-    #         if hasattr(self, 'background_item') and self.background_item:
-    #             self.scene.removeItem(self.background_item)
-                
-    #         # Add new background
-    #         self.background_item = QGraphicsPixmapItem(pixmap)
-    #         self.scene.addItem(self.background_item)
-            
-    #         # Set scene rect to image dimensions
-    #         self.scene.setSceneRect(pixmap.rect())
-            
-    #         # Fit the view to the new image
-    #         self.ui.graphicsView.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-            
-    #     except Exception as e:
-    #         QMessageBox.critical(self, "Error Loading Image", 
-    #                            f"An error occurred while loading the image:\n{str(e)}")
-    
     def on_default_empire_map_selected(self):
         if "The_empire" in self.state.images:
             empire_image = self.state.images["The_empire"]
