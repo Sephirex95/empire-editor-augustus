@@ -11,7 +11,7 @@ from PySide6.QtGui import QIcon, QPixmap, QImage, QCursor, QPainter, QPen, QBrus
 from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QPoint, QRectF, QSizeF, QPointF, QTimer
 from sg_reader import SgFileReader
 from ui_empire_editor import Ui_MainWindow
-# top of main_window.py (with your other imports)
+
 import empire_data as ed
 import edit_city_logic as emp_dlg
 from math import hypot
@@ -19,7 +19,7 @@ from enum import Enum, auto
 import copy
 
 # ---------------------------------------------
-# New, separated enums
+# separated enums
 # ---------------------------------------------
 class EmpCityTypes(Enum):
     OUR = auto()
@@ -30,7 +30,13 @@ class EmpObjTypes(Enum):
     EMPIRE_EDGE = auto()
     LAND_DOT = auto()
     SEA_DOT = auto()
-    
+    TRADE_FLAG = auto()
+    ROMAN_FLAG = auto()
+    DISTANT_FLAG = auto()
+    OUR_FLAG = auto()
+    OUR_LEGION = auto()
+    NATIVES = auto()
+    DISTANT_BATTLE = auto()
     
 CITYTYPE_TO_KIND = {
     ed.CityType.OURS: EmpCityTypes.OUR,
@@ -105,19 +111,25 @@ class ProgramState:
             def crop5x5(img):
                 return img.crop((0, 0, 5, 5))  # (left, top, right, bottom), bottom is exclusive
 
+            # augustus assets used via layering:
             bits = self.images["empire_bits"]
             self.images["sea_dot"]  = crop5x5(bits[102])
             self.images["land_dot"] = crop5x5(bits[94])
-            
-
-            # NOTE: "kind" now holds a value from EmpCityTypes OR EmpObjTypes.
+            # images from vanilla files
             self.elements = [
-                {"name": "Our City",      "pil": bits[0],  "kind": EmpCityTypes.OUR},
-                {"name": "Roman City",    "pil": bits[7],  "kind": EmpCityTypes.TRADE},
-                {"name": "Far away city", "pil": bits[21], "kind": EmpCityTypes.DISTANT},
-                {"name": "Empire edge",   "pil": bits[71], "kind": EmpObjTypes.EMPIRE_EDGE},
-                #{"name": "Sea Dot",       "pil": crop5x5(bits[102]), "kind": EmpObjTypes.SEA_DOT},
-                #{"name": "Land Dot",      "pil": crop5x5(bits[94]), "kind": EmpObjTypes.LAND_DOT}
+                {"name": "Our City",      "pil": bits[0],   "kind": EmpCityTypes.OUR},
+                {"name": "Our Flag",      "pil": bits[1],   "kind": EmpObjTypes.OUR_FLAG},
+                {"name": "Roman City",    "pil": bits[7],   "kind": EmpCityTypes.TRADE},
+                {"name": "Trade Flag",    "pil": bits[8],   "kind": EmpObjTypes.TRADE_FLAG},
+                {"name": "Roman Flag",    "pil": bits[15],  "kind": EmpObjTypes.ROMAN_FLAG},
+                {"name": "Distant City",  "pil": bits[21],  "kind": EmpCityTypes.DISTANT},
+                {"name": "Distant Flag",  "pil": bits[22],  "kind": EmpObjTypes.DISTANT_FLAG},
+                {"name": "Empire Edge",   "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE},
+                #not yet used:
+                {"name": "Distant Battle","pil": bits[28],  "kind": EmpObjTypes.DISTANT_BATTLE},
+                {"name": "Our Legion",    "pil": bits[36],  "kind": EmpObjTypes.OUR_LEGION},
+                {"name": "Natives",       "pil": bits[52],  "kind": EmpObjTypes.NATIVES},
+
             ]
         except (KeyError, IndexError):
             self.init_failed = True
@@ -382,11 +394,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.Ok
             )
         except Exception as e:
-            raise e
-            # QMessageBox.critical(
-            #     self, "Load Error", f"Failed to load empire:\n{str(e)}",
-            #     QMessageBox.Ok
-            # )
+            QMessageBox.critical(
+                self, "Load Error", f"Failed to load empire:\n{str(e)}",
+                QMessageBox.Ok
+            )
 
     def save_empire_xml(self):
         """Save current empire to XML file."""
@@ -550,7 +561,6 @@ class MainWindow(QMainWindow):
         et = event.type()
     
         # 1) Always ignore modal dialogs
-
         if QApplication.activeModalWidget() or QApplication.activePopupWidget():
             return False
 
@@ -719,7 +729,7 @@ class MainWindow(QMainWindow):
                     self._show_context_menu_for_item(it, gp)
                     return True
     
-            # No selectable item → clear selection
+            # No selectable item -> clear selection
             self.deselect_all()
             return True
     
@@ -915,9 +925,9 @@ class MainWindow(QMainWindow):
         """Remove border selection overlay."""
         self._clear_selection_overlay("border")
         
-    def clear_trade_route_selection_overlay(self):
-        """Remove trade route selection overlay."""
-        self._clear_selection_overlay("trade_route")
+    # def clear_trade_route_selection_overlay(self):
+    #     """Remove trade route selection overlay."""
+    #     self._clear_selection_overlay("trade_route")
         
     def clear_vertex_handles(self):
         """Remove vertex editing handles."""
@@ -989,122 +999,6 @@ class MainWindow(QMainWindow):
             
             self.trade_route_selected = True
             self.selected_trade_route_city = city
-
-    def select_empire_border_overlay(self):
-        """Mark the existing border overlay as selected."""
-        e = self.state.current_empire_object
-        if not (self.empire_border and e and e.border and self.bg_item):
-            return
-        pts = [(edge.x, edge.y) for edge in e.border.edges]
-        if len(pts) >= 2:
-            self._create_selection_overlay("border", pts)
-
-    def select_trade_route_overlay(self, city):
-        """Show selection overlay for a trade route."""
-        if (city and city.trade_route and city.trade_route.trade_points and 
-            len(city.trade_route.trade_points) >= 2):
-            pts = [(p.x, p.y) for p in city.trade_route.trade_points]
-            self._create_selection_overlay("trade_route", pts, city=city)
-
-    # ===================================================================
-    # VERTEX EDITING SYSTEM
-    # ===================================================================
-    
-    def create_vertex_handles(self, vertex_type, points, city=None):
-        """Create vertex handles for editing."""
-        self.clear_vertex_handles()
-        if not points or not self.bg_item:
-            return
-        
-        handle_size = 8
-        half = handle_size / 2.0
-        
-        for i, (x, y) in enumerate(points):
-            scene_pos = self.bg_item.mapToScene(x, y)
-            handle = self.scene.addRect(scene_pos.x() - half, scene_pos.y() - half, 
-                                      handle_size, handle_size, QPen(Qt.blue, 1), QBrush(Qt.blue))
-            handle.setZValue(140)
-            handle.setFlag(QGraphicsItem.ItemIsSelectable, True)
-            handle.setCursor(Qt.PointingHandCursor)
-            handle.setData(Qt.UserRole, "VERTEX_HANDLE")
-            handle.setData(Qt.UserRole + 1, vertex_type)
-            handle.setData(Qt.UserRole + 2, i)
-            if city:
-                handle.setData(Qt.UserRole + 3, city)
-            self.vertex_handle_items.append(handle)
-
-    def start_vertex_editing(self, handle_item):
-        """Start editing a vertex."""
-        if self.vertex_editing_active:
-            return
-        
-        self.vertex_editing_active = True
-        self.editing_vertex_type = handle_item.data(Qt.UserRole + 1)
-        self.editing_vertex_index = handle_item.data(Qt.UserRole + 2)
-        self.editing_vertex_city = handle_item.data(Qt.UserRole + 3)
-        self.editing_vertex_handle = handle_item
-        handle_item.setBrush(QBrush(Qt.yellow))
-        self.ui.graphicsView.setInteractive(False)
-
-    def update_vertex_position(self, scene_pos):
-        """Update vertex position during dragging."""
-        if not self.vertex_editing_active or not self.editing_vertex_handle:
-            return
-        rect = self.editing_vertex_handle.rect()
-        rect.moveCenter(scene_pos)
-        self.editing_vertex_handle.setRect(rect)
-
-    def finish_vertex_editing(self, scene_pos):
-        """Finish vertex editing and save changes."""
-        if not self.vertex_editing_active:
-            return
-        
-        xy = self._scene_to_image_xy(scene_pos)
-        if xy is None:
-            self.cancel_vertex_editing()
-            return
-        
-        x, y = xy
-        
-        # Update data and re-render
-        if self.editing_vertex_type == "TRADE_ROUTE" and self.editing_vertex_city:
-            city = self.editing_vertex_city
-            if (city.trade_route and city.trade_route.trade_points and 
-                0 <= self.editing_vertex_index < len(city.trade_route.trade_points)):
-                city.trade_route.trade_points[self.editing_vertex_index].x = int(x)
-                city.trade_route.trade_points[self.editing_vertex_index].y = int(y)
-                self.render_trade_route(city)
-                pts = [(p.x, p.y) for p in city.trade_route.trade_points]
-                self.create_vertex_handles("TRADE_ROUTE", pts, city)
-        elif self.editing_vertex_type == "EMPIRE_BORDER":
-            empire = self.state.current_empire_object
-            if (empire and empire.border and empire.border.edges and 
-                0 <= self.editing_vertex_index < len(empire.border.edges)):
-                empire.border.edges[self.editing_vertex_index].x = int(x)
-                empire.border.edges[self.editing_vertex_index].y = int(y)
-                self.render_empire_border()
-                pts = [(edge.x, edge.y) for edge in empire.border.edges]
-                self.create_vertex_handles("EMPIRE_BORDER", pts)
-        
-        self._reset_vertex_editing_state()
-
-    def cancel_vertex_editing(self):
-        """Cancel vertex editing without saving."""
-        if not self.vertex_editing_active:
-            return
-        if self.editing_vertex_handle:
-            self.editing_vertex_handle.setBrush(QBrush(Qt.blue))
-        self._reset_vertex_editing_state()
-    
-    def _reset_vertex_editing_state(self):
-        """Reset vertex editing state variables."""
-        self.vertex_editing_active = False
-        self.editing_vertex_type = None
-        self.editing_vertex_index = None
-        self.editing_vertex_city = None
-        self.editing_vertex_handle = None
-        self.ui.graphicsView.setInteractive(True)
-
     # ===================================================================
     # UNIFIED MESSAGE BOXES & UTILITIES
     # ===================================================================
@@ -1668,8 +1562,8 @@ class MainWindow(QMainWindow):
             return
             
         # Move the handle to follow the mouse
-        handle_size = 8
-        half = handle_size / 2.0
+        # handle_size = 8
+        # half = handle_size / 2.0
         rect = self.editing_vertex_handle.rect()
         rect.moveCenter(scene_pos)
         self.editing_vertex_handle.setRect(rect)
@@ -2437,7 +2331,7 @@ class MainWindow(QMainWindow):
             trade_type = ed.CityType.TRADE
             return trade_type, "Roman City"
         elif kind == EmpCityTypes.DISTANT:
-            return ed.CityType.DISTANT, "Far away city"
+            return ed.CityType.DISTANT, "Distant City"
         else:
             return None, "City"
     
@@ -2699,7 +2593,7 @@ class MainWindow(QMainWindow):
                 return
 
             # Create new "Our City" with center coordinates
-            ours = ed.City(name="Our City", x=x, y=y, type=ed.CityType.OURS, sells=[])
+            ours = ed.City(name="Our City", x=x, y=y, city_type=ed.CityType.OURS, sells=[])
             empire.cities.append(ours)
             # Convert to top-left for scene placement
             pixmap = self._pixmap_for_city(ours)
@@ -2713,7 +2607,7 @@ class MainWindow(QMainWindow):
         if ctype is None:
             return
         # Store center coordinates in city data
-        city = ed.City(name=default_name, x=x, y=y, type=ctype, sells=[])
+        city = ed.City(name=default_name, x=x, y=y, city_type=ctype, sells=[])
         empire.cities.append(city)
         # Convert to top-left for scene placement
         pixmap = self._pixmap_for_city(city)

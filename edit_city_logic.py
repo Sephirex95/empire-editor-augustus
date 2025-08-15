@@ -407,7 +407,7 @@ class CityPropertiesDialog(QDialog):
             tr_type = self._route_type_combo.currentData() or to_trade_route_type(self._route_type_combo.currentText())
             tr_cost = int(self._route_cost_spin.value())
             existing_pts = c.trade_route.trade_points if c.trade_route else []
-            c.trade_route = TradeRoute(cost=tr_cost, type=tr_type, trade_points=list(existing_pts))
+            c.trade_route = TradeRoute(cost=tr_cost, r_type=tr_type, trade_points=list(existing_pts))
         else:
             c.trade_route = None
     
