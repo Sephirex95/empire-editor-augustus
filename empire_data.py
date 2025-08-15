@@ -93,7 +93,6 @@ class Border:
     density: Optional[int] = 50  # defaults to 50 per docs
     edges: List[Edge] = field(default_factory=list)
 
-
 @dataclass
 class Resource:
     """<resource type="" amount=""> (amount optional, defaults to 1; ours can omit)"""
@@ -195,7 +194,7 @@ class Map:
 
 @dataclass
 class Empire:
-    def __init__(self, version=1, ornaments=None, border=None, cities=None, invasion_paths=None, distant_battle_paths=None, map_info=None):
+    def __init__(self, version=1, ornaments=None, border=None, cities=None, invasion_paths=None, distant_battle_paths=None, map_info=None, show_ireland=True):
         self.version = int(version)
         self.ornaments = list(ornaments) if ornaments else []
         self.border = border
@@ -206,14 +205,18 @@ class Empire:
         # For version > 1, use provided map_info or create default
         if version == 1:
             self.map_info = None
+            self.show_ireland: bool = True if show_ireland is None else show_ireland
         else:
             self.map_info = map_info if map_info is not None else Map()
+            self.show_ireland: bool = False if show_ireland is None else show_ireland
 
     # ------------------------ XML writing (serialization) ------------------------
 
     def _to_element(self):
         root = Element("empire")
         root.set("version", str(self.version))
+        if hasattr(self, 'show_ireland') and self.show_ireland:
+            root.set("show_ireland", "true")
 
         # Add map element for version > 1
         if self.version > 1 and self.map_info is not None:
@@ -352,6 +355,9 @@ class Empire:
         if root.tag != "empire":
             raise ValueError("Root tag must be <empire>")
         version = int(root.get("version"))
+        
+        # Parse show_ireland attribute
+        show_ireland = root.get("show_ireland", "false").lower() == "true"
 
         # map info (only for version > 1)
         map_info = None
@@ -479,7 +485,7 @@ class Empire:
                     waypoints.append(Waypoint(int(w.get("num_months")), int(w.get("x")), int(w.get("y"))))
                 distant_battle_paths.append(DistantBattlePath(path_type=ptype, start_x=start_x, start_y=start_y, waypoints=waypoints))
 
-        return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths, map_info)
+        return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths, map_info, show_ireland)
 
     @classmethod
     def read_xml(cls, path):

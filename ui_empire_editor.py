@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QListWidget, QGraphicsView,
     QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout, QLabel,
     QDialog, QVBoxLayout, QPushButton, QListWidgetItem, QFileDialog,
-    QMessageBox
+    QMessageBox, QSpinBox, QCheckBox
 )
 
 class EmpireMapView(QGraphicsView):
@@ -36,11 +36,31 @@ class Ui_MainWindow(object):
         self.actionSelect_background_Image = QAction(MainWindow)
         self.actionSelect_background_Image.setObjectName("actionSelect_background_Image")
 
-        self.actionDefaultEmpireMap = QAction(MainWindow)
-        self.actionDefaultEmpireMap.setObjectName("actionDefaultEmpireMap")
+        self.actionEmpireProperties = QAction(MainWindow)
+        self.actionEmpireProperties.setObjectName("actionEmpireProperties")
 
         self.actionOptions = QAction(MainWindow); self.actionOptions.setObjectName("actionOptions")
         self.actionAbout   = QAction(MainWindow); self.actionAbout.setObjectName("actionAbout")
+
+        self.actionViewOption1 = QAction(MainWindow)
+        self.actionViewOption1.setObjectName("actionViewOption1")
+        self.actionViewOption1.setCheckable(True)
+        self.actionViewOption1.setChecked(True)
+
+        self.actionViewOption2 = QAction(MainWindow)
+        self.actionViewOption2.setObjectName("actionViewOption2")
+        self.actionViewOption2.setCheckable(True)
+        self.actionViewOption2.setChecked(True)
+
+        self.actionViewOption3 = QAction(MainWindow)
+        self.actionViewOption3.setObjectName("actionViewOption3")
+        self.actionViewOption3.setCheckable(True)
+        self.actionViewOption3.setChecked(True)
+
+        self.actionViewOption4 = QAction(MainWindow)
+        self.actionViewOption4.setObjectName("actionViewOption4")
+        self.actionViewOption4.setCheckable(True)
+        self.actionViewOption4.setChecked(False)  # Off by default
 
         # GitHub submenu actions
         self.actionGitHub_Augustus = QAction(MainWindow); self.actionGitHub_Augustus.setObjectName("actionGitHub_Augustus")
@@ -80,6 +100,7 @@ class Ui_MainWindow(object):
 
         self.menuFile = QMenu(self.menubar); self.menuFile.setObjectName("menuFile")
         self.menuEmpireProperties = QMenu(self.menubar); self.menuEmpireProperties.setObjectName("menuEmpireProperties")
+        self.menuView = QMenu(self.menubar); self.menuView.setObjectName("menuView")
         self.menuSettings = QMenu(self.menubar); self.menuSettings.setObjectName("menuSettings")
         self.menuHelp = QMenu(self.menubar); self.menuHelp.setObjectName("menuHelp")
         self.menuGitHub = QMenu(self.menuHelp); self.menuGitHub.setObjectName("menuGitHub")
@@ -99,8 +120,13 @@ class Ui_MainWindow(object):
 
         # Empire properties
         self.menuEmpireProperties.addAction(self.actionSelect_background_Image)
-        self.menuEmpireProperties.addAction(self.actionDefaultEmpireMap)
+        self.menuEmpireProperties.addAction(self.actionEmpireProperties)
 
+        # View
+        self.menuView.addAction(self.actionViewOption1)
+        self.menuView.addAction(self.actionViewOption2)
+        self.menuView.addAction(self.actionViewOption3)
+        self.menuView.addAction(self.actionViewOption4)
         # Settings
         self.menuSettings.addAction(self.actionOptions)
 
@@ -115,6 +141,7 @@ class Ui_MainWindow(object):
         # Add top-level menus to menubar
         self.menubar.addAction(self.menuFile.menuAction())
         self.menubar.addAction(self.menuEmpireProperties.menuAction())
+        self.menubar.addAction(self.menuView.menuAction())
         self.menubar.addAction(self.menuSettings.menuAction())
         self.menubar.addAction(self.menuHelp.menuAction())
 
@@ -128,6 +155,7 @@ class Ui_MainWindow(object):
         # Menus
         self.menuFile.setTitle(_t("MainWindow", "File", None))
         self.menuEmpireProperties.setTitle(_t("MainWindow", "Empire properties", None))
+        self.menuView.setTitle(_t("MainWindow", "View", None))
         self.menuSettings.setTitle(_t("MainWindow", "Settings", None))
         self.menuHelp.setTitle(_t("MainWindow", "Help", None))
         self.menuGitHub.setTitle(_t("MainWindow", "GitHub", None))
@@ -137,9 +165,16 @@ class Ui_MainWindow(object):
         self.actionOpen.setText(_t("MainWindow", "Open Empire XML", None))
         self.actionSave.setText(_t("MainWindow", "Save Empire XML", None))
         self.actionSelect_background_Image.setText(_t("MainWindow", "Select background Image", None))
-        self.actionDefaultEmpireMap.setText(_t("MainWindow", "Default Empire Map", None))
+        self.actionEmpireProperties.setText(_t("MainWindow", "Empire Properties", None))
         self.actionOptions.setText(_t("MainWindow", "Options…", None))
         self.actionAbout.setText(_t("MainWindow", "About", None))
+        
+        # View options
+        self.actionViewOption1.setText(_t("MainWindow", "Show Cities", None))
+        self.actionViewOption2.setText(_t("MainWindow", "Show Trade Routes", None))
+        self.actionViewOption3.setText(_t("MainWindow", "Show Empire Border", None))
+        self.actionViewOption4.setText(_t("MainWindow", "Show Name Labels", None))
+        
         self.actionGitHub_Augustus.setText(_t("MainWindow", "Augustus", None))
         self.actionGitHub_Editor.setText(_t("MainWindow", "Augustus Empire Editor", None))
         self.actionGitHub_Custom.setText(_t("MainWindow", "Custom Empires", None))
@@ -310,3 +345,171 @@ class ImageSelectionDialog(QDialog):
     def get_selected_image(self):
         """Return the path of the selected image."""
         return self.selected_image_path
+
+
+class EmpirePropertiesDialog(QDialog):
+    """Modal dialog for configuring empire properties."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Empire Properties")
+        self.setModal(True)
+        self.setMinimumSize(300, 250)
+        self.resize(350, 300)  # Narrower dialog
+        
+        # Store parent reference for checking map state
+        self.main_window = parent
+        
+        # Store original values for cancel functionality
+        self.original_border_spacing = 50  # Default to 50
+        self.original_ornaments_enabled = True
+        self.original_show_ireland = False
+        
+        self.setup_ui()
+        self.update_ornaments_state()  # Set initial state based on map
+        
+    def setup_ui(self):
+        """Create the UI layout."""
+        layout = QVBoxLayout(self)
+        
+        # Properties group
+        properties_group = QWidget()
+        properties_layout = QVBoxLayout(properties_group)
+        
+        # Border spacing
+        border_layout = QHBoxLayout()
+        border_layout.addWidget(QLabel("Border Spacing:"))
+        self.border_spacing_spinbox = QSpinBox()
+        self.border_spacing_spinbox.setRange(0, 100)
+        self.border_spacing_spinbox.setValue(50)  # Default value set to 50 as per border class
+        self.border_spacing_spinbox.setSuffix(" px")
+        border_layout.addWidget(self.border_spacing_spinbox)
+        border_layout.addStretch()
+        properties_layout.addLayout(border_layout)
+        
+        # Ornaments checkbox
+        self.ornaments_checkbox = QCheckBox("Enable Ornaments")
+        properties_layout.addWidget(self.ornaments_checkbox)
+        
+        # Show Ireland checkbox
+        self.show_ireland_checkbox = QCheckBox("Show Ireland")
+        properties_layout.addWidget(self.show_ireland_checkbox)
+        
+        layout.addWidget(properties_group)
+        layout.addStretch()
+        
+        # Bottom area with legacy button and main buttons
+        bottom_layout = QVBoxLayout()
+        
+        # Legacy button in corner (smaller)
+        legacy_layout = QHBoxLayout()
+        self.legacy_button = QPushButton("Legacy BG")
+        self.legacy_button.setMaximumWidth(80)  # Make it smaller
+        self.legacy_button.setToolTip("Set Legacy Background")  # Tooltip for clarity
+        self.legacy_button.clicked.connect(self.set_legacy_background)
+        legacy_layout.addWidget(self.legacy_button)
+        legacy_layout.addStretch()  # Push to left corner
+        bottom_layout.addLayout(legacy_layout)
+        
+        # Main OK/Cancel buttons
+        button_layout = QHBoxLayout()
+        
+        self.ok_button = QPushButton("OK")
+        self.ok_button.clicked.connect(self.accept)
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.cancel_and_restore)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(cancel_button)
+        
+        bottom_layout.addLayout(button_layout)
+        layout.addLayout(bottom_layout)
+    
+    def set_legacy_background(self):
+        """Handle the set legacy background button click with warning."""
+        # Show warning message
+        reply = QMessageBox.question(
+            self, 
+            "Set Legacy Background", 
+            "This will replace the current background with the default empire map. "
+            "Any unsaved changes may be lost. Do you want to continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Call the parent's on_default_empire_map_selected method
+            if self.main_window and hasattr(self.main_window, 'on_default_empire_map_selected'):
+                self.main_window.on_default_empire_map_selected()
+                # Update ornaments state after setting legacy background
+                self.update_ornaments_state()
+                self.accept()
+    
+    def update_ornaments_state(self):
+        """Update ornaments and show_ireland checkbox state based on map properties."""
+        if self.main_window:
+            # Check if empire.map_info is not None
+            has_map_info = False
+            if hasattr(self.main_window, 'state') and self.main_window.state:
+                if hasattr(self.main_window.state, 'current_empire_object') and self.main_window.state.current_empire_object:
+                    empire = self.main_window.state.current_empire_object
+                    if hasattr(empire, 'map_info') and empire.map_info is not None:
+                        has_map_info = True
+            
+            # Disable checkboxes if empire.map_info != None
+            if has_map_info:
+                self.ornaments_checkbox.setEnabled(False)
+                self.show_ireland_checkbox.setEnabled(False)
+            else:
+                self.ornaments_checkbox.setEnabled(True)
+                self.show_ireland_checkbox.setEnabled(True)
+                
+            # Set default states (ornaments enabled, show_ireland disabled by default)
+            self.ornaments_checkbox.setChecked(not has_map_info)
+            self.show_ireland_checkbox.setChecked(False)
+        else:
+            # Fallback: enable all controls if no parent reference
+            self.ornaments_checkbox.setEnabled(True)
+            self.show_ireland_checkbox.setEnabled(True)
+            self.ornaments_checkbox.setChecked(True)
+            self.show_ireland_checkbox.setChecked(False)
+    
+    def get_border_spacing(self):
+        """Return the selected border spacing value."""
+        return self.border_spacing_spinbox.value()
+    
+    def get_ornaments_enabled(self):
+        """Return whether ornaments are enabled."""
+        return self.ornaments_checkbox.isChecked()
+    
+    def get_show_ireland(self):
+        """Return whether show Ireland is enabled."""
+        return self.show_ireland_checkbox.isChecked()
+    
+    def set_border_spacing(self, value):
+        """Set the border spacing value and store original."""
+        self.original_border_spacing = value
+        self.border_spacing_spinbox.setValue(value)
+    
+    def set_ornaments_enabled(self, enabled):
+        """Set whether ornaments are enabled and store original."""
+        self.original_ornaments_enabled = enabled
+        self.ornaments_checkbox.setChecked(enabled)
+    
+    def set_show_ireland(self, enabled):
+        """Set whether show Ireland is enabled and store original."""
+        self.original_show_ireland = enabled
+        self.show_ireland_checkbox.setChecked(enabled)
+    
+    def restore_original_values(self):
+        """Restore original values for cancel functionality."""
+        self.border_spacing_spinbox.setValue(self.original_border_spacing)
+        self.ornaments_checkbox.setChecked(self.original_ornaments_enabled)
+        self.show_ireland_checkbox.setChecked(self.original_show_ireland)
+    
+    def cancel_and_restore(self):
+        """Cancel dialog and restore original values."""
+        self.restore_original_values()
+        self.reject()
