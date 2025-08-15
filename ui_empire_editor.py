@@ -1,8 +1,8 @@
 # ui_empire_editor.py
 import os
-from PyQt6.QtCore import Qt, QCoreApplication, QSize
-from PyQt6.QtGui import QAction, QPixmap
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QCoreApplication, QSize
+from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtWidgets import (
     QWidget, QListWidget, QGraphicsView,
     QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout, QLabel,
     QDialog, QVBoxLayout, QPushButton, QListWidgetItem, QFileDialog,
