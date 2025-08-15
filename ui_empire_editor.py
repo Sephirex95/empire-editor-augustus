@@ -13,25 +13,11 @@ class EmpireMapView(QGraphicsView):
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)  # no label updates here
 
-    # def mouseMoveEvent(self, event):
-    #     """
-    #     Track the mouse movement and update the status bar with the mouse position relative to the graphics view.
-    #     """
-    #     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())  # Get local position in view
-    #     if self.rect().contains(local_pos):  # Ensure it's within the view
-    #         # Get the MainWindow reference and update the mouse position label
-    #         main_window = self.window()  # This will get the top-level window, which is MainWindow
-    #         main_window.ui.mouse_position_label.setText(f"Mouse Position: ({local_pos.x()}, {local_pos.y()})")
-        
-    #     # Call the base class implementation for normal mouse move behavior
-    #     super().mouseMoveEvent(event)
-
-
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(1920, 931)
+        MainWindow.resize(1920, 920)
         MainWindow.setMinimumWidth(900)  # 400 + 400 + some room
     
         # Actions
@@ -99,7 +85,7 @@ class Ui_MainWindow(object):
         self.menubar.addAction(self.menuMap_Settings.menuAction())
     
         # Connect the new action to the method that handles it
-        self.actionDefaultEmpireMap.triggered.connect(MainWindow.on_default_empire_map_selected)
+        #self.actionDefaultEmpireMap.triggered.connect(MainWindow.on_default_empire_map_selected)
 
         # Re-translate the UI elements (for localization)
         self.retranslateUi(MainWindow)

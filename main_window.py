@@ -308,8 +308,9 @@ class MainWindow(QMainWindow):
 
         # UI wiring
         self.add_city_icons_to_list()
-        self.ui.actionSelect_background_Image.triggered.connect(self.load_background_image)
-        
+        self.ui.actionSelect_background_Image.triggered.connect(lambda: self.set_background_image(None, True))
+        self.ui.actionDefaultEmpireMap.triggered.connect(self.on_default_empire_map_selected)
+
         # Connect XML file operations
         self.ui.actionOpen.triggered.connect(self.open_empire_xml)
         self.ui.actionSave.triggered.connect(self.save_empire_xml)
@@ -479,11 +480,19 @@ class MainWindow(QMainWindow):
             for item in list(self.scene.items()):
                 if item != self.bg_item:
                     self.scene.removeItem(item)
+        elif self.bg_item == None:
+            if empire.version > 1:
+                print("placeholder - Loading background image")
+            else:
+                print("loading default empire map")
+                self.on_default_empire_map_selected()
         
         # Place cities on scene
         if hasattr(empire, 'cities'):
             for city in empire.cities:
                 self._place_city_on_scene(city)
+                if city.trade_route is not None:
+                    self.render_trade_route(city)
         
         # Render empire border if it exists
         if hasattr(empire, 'border') and empire.border:
@@ -491,10 +500,9 @@ class MainWindow(QMainWindow):
             self.render_empire_border()
         
         # Render trade routes for cities that have them
-        if hasattr(empire, 'cities'):
-            for city in empire.cities:
-                if city.trade_route is not None:
-                    self.render_trade_route(city)
+       # if hasattr(empire, 'cities'):
+            #for city in empire.cities:
+                
 
     def _place_city_on_scene(self, city):
         """Place a city from loaded data onto the scene."""
@@ -2496,13 +2504,23 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self.center_no_background_message()  # now harmless if item was deleted
     
-    def set_background_image(self, pil_img):
-        # Ask/prepare a new empire first
-        if not self._ensure_new_empire_for_new_background():
-            return
-    
-        pixmap = self.pil_to_qpixmap(pil_img)
-        self.state.selected_empire_image = pixmap
+    def set_background_image(self, pil_img, open_dialog = False):
+        #if no empire atm -> ask to create one
+        if open_dialog:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Select Background Image", "", "Images (*.png *.jpg *.bmp *.gif)"
+            )
+            if not file_path:
+                return
+            else:
+                pixmap = QPixmap(file_path)
+                self.state.selected_empire_image = pixmap
+        if (not self.state.check_if_empire()) or self.state.has_any_data(): 
+            self._ensure_new_empire_for_new_background()
+            
+        if pil_img:
+            pixmap = self.pil_to_qpixmap(pil_img)
+            self.state.selected_empire_image = pixmap
     
         self.scene.clear()
         self.bg_item = None
@@ -2539,34 +2557,6 @@ class MainWindow(QMainWindow):
         data = pil_img.tobytes("raw", "RGBA")
         qimg = QImage(data, w, h, QImage.Format_RGBA8888)
         return QPixmap.fromImage(qimg)
-    
-    def load_background_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Background Image", "", "Images (*.png *.jpg *.bmp *.gif)"
-        )
-        if not file_path:
-            return
-    
-        # Ask/prepare a new empire first
-        if not self._ensure_new_empire_for_new_background():
-            return
-    
-        pixmap = QPixmap(file_path)
-        self.state.selected_empire_image = pixmap
-        self.scene.clear()
-        
-        # Clear all trade route state when scene is cleared
-        self._clear_scene_state()
-        
-        self.no_bg_item = None
-        self.bg_item = QGraphicsPixmapItem(pixmap)
-        self.bg_item.setZValue(-1000)  # keep it behind markers
-        self.scene.addItem(self.bg_item)
-        self.scene.setSceneRect(pixmap.rect())
-        self.ui.graphicsView.setEnabled(True)
-        self.remove_no_background_message()
-        if self.empire_border and self.state.current_empire_object.border:
-            self.render_empire_border()
 
     def _ensure_new_empire_for_new_background(self) -> bool:
         """
@@ -2578,18 +2568,15 @@ class MainWindow(QMainWindow):
             resp = QMessageBox.question(
                 self,
                 "Create New Empire?",
-                "You have unsaved work in the current empire.\n"
-                "Create a new one and discard current progress?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
             if resp != QMessageBox.Yes:
                 return False
     
-        # Create a fresh empire (always on new background as requested)
-        self.state.new_empire()
-        # Clear any old markers
-        self.city_items.clear()
+        
+        self.state.new_empire() # Create a fresh empire 
+        self.city_items.clear() # Clear any old markers
         return True
         
 

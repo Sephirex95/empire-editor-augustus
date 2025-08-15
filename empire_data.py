@@ -178,23 +178,56 @@ class DistantBattlePath:
     waypoints: List[Waypoint] = field(default_factory=list)
 
 
+@dataclass
+class Map:
+    """<map image="" x_offset="" y_offset="" width="" height="">"""
+    image: str = ""
+    x_offset: int = 0
+    y_offset: int = 0
+    width: int = 0
+    height: int = 0
+    coordinates_relative: bool = False
+    coordinates_x_offset: int = 0
+    coordinates_y_offset: int = 0
+
+
 # ---------- Root ----------
 
 @dataclass
 class Empire:
-    def __init__(self, version=1, ornaments=None, border=None, cities=None, invasion_paths=None, distant_battle_paths=None):
+    def __init__(self, version=1, ornaments=None, border=None, cities=None, invasion_paths=None, distant_battle_paths=None, map_info=None):
         self.version = int(version)
         self.ornaments = list(ornaments) if ornaments else []
         self.border = border
         self.cities = list(cities) if cities else []
         self.invasion_paths = list(invasion_paths) if invasion_paths else []
         self.distant_battle_paths = list(distant_battle_paths) if distant_battle_paths else []
+        # For version 1, use default map (None means use built-in default)
+        # For version > 1, use provided map_info or create default
+        if version == 1:
+            self.map_info = None
+        else:
+            self.map_info = map_info if map_info is not None else Map()
 
     # ------------------------ XML writing (serialization) ------------------------
 
     def _to_element(self):
         root = Element("empire")
         root.set("version", str(self.version))
+
+        # Add map element for version > 1
+        if self.version > 1 and self.map_info is not None:
+            map_el = SubElement(root, "map")
+            map_el.set("image", self.map_info.image)
+            map_el.set("x_offset", str(self.map_info.x_offset))
+            map_el.set("y_offset", str(self.map_info.y_offset))
+            map_el.set("width", str(self.map_info.width))
+            map_el.set("height", str(self.map_info.height))
+            
+            coords_el = SubElement(map_el, "coordinates")
+            coords_el.set("relative", "true" if self.map_info.coordinates_relative else "false")
+            coords_el.set("x_offset", str(self.map_info.coordinates_x_offset))
+            coords_el.set("y_offset", str(self.map_info.coordinates_y_offset))
 
         for o in self.ornaments:
             o_el = SubElement(root, "ornament")
@@ -318,7 +351,39 @@ class Empire:
         root = tree.getroot()
         if root.tag != "empire":
             raise ValueError("Root tag must be <empire>")
-        version = int(root.get("version", "1"))
+        version = int(root.get("version"))
+
+        # map info (only for version > 1)
+        map_info = None
+        if version > 1:
+            map_el = cls._child(root, "map")
+            if map_el is not None:
+                image = map_el.get("image")
+                x_offset = int(map_el.get("x_offset"))
+                y_offset = int(map_el.get("y_offset"))
+                width = int(map_el.get("width"))
+                height = int(map_el.get("height"))
+                
+                coords_el = cls._child(map_el, "coordinates")
+                if coords_el is not None:
+                    coordinates_relative = cls._parse_bool(coords_el.get("relative"))
+                    coordinates_x_offset = int(coords_el.get("x_offset"))
+                    coordinates_y_offset = int(coords_el.get("y_offset"))
+                else:
+                    coordinates_relative = False
+                    coordinates_x_offset = 0
+                    coordinates_y_offset = 0
+                
+                map_info = Map(
+                    image=image,
+                    x_offset=x_offset,
+                    y_offset=y_offset,
+                    width=width,
+                    height=height,
+                    coordinates_relative=coordinates_relative,
+                    coordinates_x_offset=coordinates_x_offset,
+                    coordinates_y_offset=coordinates_y_offset
+                )
 
         # ornaments
         ornaments = []
@@ -414,7 +479,7 @@ class Empire:
                     waypoints.append(Waypoint(int(w.get("num_months")), int(w.get("x")), int(w.get("y"))))
                 distant_battle_paths.append(DistantBattlePath(path_type=ptype, start_x=start_x, start_y=start_y, waypoints=waypoints))
 
-        return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths)
+        return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths, map_info)
 
     @classmethod
     def read_xml(cls, path):
@@ -426,4 +491,4 @@ __all__ = [
     "OrnamentType", "CityType", "ResourceType", "TradeRouteType", "DistantPathType",
     "Ornament", "Edge", "Border", "Resource", "TradePoint", "TradeRoute",
     "City", "Battle", "InvasionPath", "Waypoint", "DistantBattlePath",
-    "Empire"]
+    "Map", "Empire"]
