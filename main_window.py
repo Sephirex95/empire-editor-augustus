@@ -42,10 +42,6 @@ CITYTYPE_TO_KIND = {
 # ---------------------------------------------
 
 
-
-
-
-
 class ProgramState:
     def __init__(self):
         self.images = {}
@@ -282,7 +278,6 @@ class MainWindow(QMainWindow):
         # Drag handling
         self.selected_item = None
         self.selected_kind = None        # can be EmpCityTypes or EmpObjTypes
-        self.current_icon = None
         self.is_dragging = False
         self._init_context_menus()
 
@@ -343,7 +338,7 @@ class MainWindow(QMainWindow):
         except ValueError:
             return None
         
-        
+
     def open_empire_xml(self):
         """Open and load empire from XML file."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -457,7 +452,7 @@ class MainWindow(QMainWindow):
         # Render trade routes for cities that have them
         if hasattr(empire, 'cities'):
             for city in empire.cities:
-                if hasattr(city, 'trade_route') and city.trade_route and city.trade_route.trade_points:
+                if city.trade_route is not None:
                     self.render_trade_route(city)
 
     def _place_city_on_scene(self, city):
@@ -465,7 +460,12 @@ class MainWindow(QMainWindow):
         if not hasattr(city, 'x') or not hasattr(city, 'y'):
             return
         
-        self._place_city_marker(city, city.x, city.y)
+        # Convert center coordinates to top-left for scene placement
+        pixmap = self._pixmap_for_city(city)
+        if not pixmap.isNull():
+            top_left_x = city.x - pixmap.width() // 2
+            top_left_y = city.y - pixmap.height() // 2
+            self._place_city_marker(city, top_left_x, top_left_y)
     def delete_trade_route_from_item(self, item):
         """Delete trade route path from context menu selection."""
         city_index = item.data(Qt.UserRole + 1)
@@ -492,11 +492,8 @@ class MainWindow(QMainWindow):
         if city:
             self._edit_city(city)
     def _get_city_center(self, city):
-        """Get the center coordinates of a city icon."""
-        city_pixmap = self._pixmap_for_city(city)
-        center_x = city.x + city_pixmap.width() // 2
-        center_y = city.y + city_pixmap.height() // 2
-        return center_x, center_y
+        """Get the center coordinates of a city icon (stored coordinates are already center)."""
+        return city.x, city.y
 
     def _trade_route_ends_at_city(self, trade_route, city):
         """Check if a trade route ends at the specified city (last point within city bounds)."""
@@ -506,14 +503,14 @@ class MainWindow(QMainWindow):
         # Get the last trade point
         last_point = trade_route.trade_points[-1]
         
-        # Get city bounds
+        # Get city bounds (coordinates are center-based)
         city_pixmap = self._pixmap_for_city(city)
-        city_width = city_pixmap.width()
-        city_height = city_pixmap.height()
+        city_half_width = city_pixmap.width() // 2
+        city_half_height = city_pixmap.height() // 2
         
-        # Check if last point is within city icon bounds
-        return (city.x <= last_point.x <= city.x + city_width and 
-                city.y <= last_point.y <= city.y + city_height)
+        # Check if last point is within city icon bounds (center-based)
+        return (city.x - city_half_width <= last_point.x <= city.x + city_half_width and 
+                city.y - city_half_height <= last_point.y <= city.y + city_half_height)
 
     def _get_city_by_index(self, index: int):
         """Get city by index from current empire's cities list."""
@@ -538,7 +535,10 @@ class MainWindow(QMainWindow):
         
         if pixmap:
             try:
-                cursor = QCursor(pixmap, 0, 0)
+                # Center the cursor on the pixmap (hotspot at center)
+                hotspot_x = pixmap.width() // 2
+                hotspot_y = pixmap.height() // 2
+                cursor = QCursor(pixmap, hotspot_x, hotspot_y)
                 for w in widgets: w.setCursor(cursor)
             except:
                 for w in widgets: 
@@ -613,11 +613,6 @@ class MainWindow(QMainWindow):
                 self._trade_update_temp_line(scene_pos)
 
             self._update_mouse_position_label(scene_pos)
-            
-
-        # Floating drag icon
-        if self.is_dragging and self.current_icon:
-            self.current_icon.move(self.mapFromGlobal(gp))
     
         return False  # don't consume
     
@@ -679,13 +674,11 @@ class MainWindow(QMainWindow):
     
         elif event.type() == QEvent.MouseButtonRelease:
             if event.button() == Qt.LeftButton:
-                self.pending_drop_pixmap = getattr(self, "drag_pixmap", None)
                 self.deselect_item()
                 if inside_view:
                     view_pos = self.ui.graphicsView.mapFromGlobal(gp)
                     scene_pos = self.ui.graphicsView.mapToScene(view_pos)
                     self.handle_icon_drop(scene_pos)
-                self.pending_drop_pixmap = None
                 return True
     
         return False
@@ -855,13 +848,8 @@ class MainWindow(QMainWindow):
 
         # cache the exact pixmap used for drag
         self.drag_pixmap = pixmap
-    
-        if self.current_icon:
-            self.current_icon.deleteLater()
-        self.current_icon = QLabel(self)
-        self.current_icon.setPixmap(pixmap)
-        self.current_icon.setFixedSize(pixmap.size())
-        self.current_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        
+        # Don't create a floating icon - use cursor instead
         self.is_dragging = True
         self.set_drawing_cursor(True, pixmap)
         self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)
@@ -869,9 +857,7 @@ class MainWindow(QMainWindow):
         self._apply_interactivity_to_all(False)
 
     def deselect_item(self):
-        if self.current_icon:
-            self.current_icon.deleteLater()
-            self.current_icon = None
+        # No floating icon to clean up anymore - using cursor instead
         # keep self.selected_kind intact so drop handler knows what was chosen
         self.selected_item = None
         self.is_dragging = False
@@ -1246,8 +1232,11 @@ class MainWindow(QMainWindow):
             for city in self.state.current_empire_object.cities:
                 if city.type == ed.CityType.OURS:
                     city_pixmap = self._pixmap_for_city(city)
-                    if (city.x <= x <= city.x + city_pixmap.width() and 
-                        city.y <= y <= city.y + city_pixmap.height()):
+                    city_half_width = city_pixmap.width() // 2
+                    city_half_height = city_pixmap.height() // 2
+                    # Check if click is within city bounds (center-based coordinates)
+                    if (city.x - city_half_width <= x <= city.x + city_half_width and 
+                        city.y - city_half_height <= y <= city.y + city_half_height):
                         self._finalize_trade_route(success=True, reopen_dialog=True)
                         return True
                     break
@@ -1413,14 +1402,8 @@ class MainWindow(QMainWindow):
         self.moving_city = city_obj
         pm = self._pixmap_for_city(city_obj)
     
-        # reuse existing drag UI bits
-        if self.current_icon:
-            self.current_icon.deleteLater()
+        # Cache the pixmap for cursor
         self.drag_pixmap = pm
-        self.current_icon = QLabel(self)
-        self.current_icon.setPixmap(pm)
-        self.current_icon.setFixedSize(pm.size())
-        self.current_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
     
         self.is_dragging = True
         self.ui.graphicsView.setInteractive(False)
@@ -2271,8 +2254,8 @@ class MainWindow(QMainWindow):
             return
             
         # Check if city type changed from trade to non-trade
-        old_type = getattr(snapshot, "type", None)
-        new_type = getattr(city_obj, "type", None)
+        old_type = snapshot.city_type
+        new_type = city_obj.city_type
         
         # If city type changed from trade to non-trade, remove trade route
         if (old_type in (getattr(ed.CityType, "TRADE", None), getattr(ed.CityType, "ROMAN", None), getattr(ed.CityType, "VULNERABLE", None)) and
@@ -2368,13 +2351,13 @@ class MainWindow(QMainWindow):
                                 self._trade_route_ends_at_city(other_city.trade_route, city)):
                                 affected_cities.append(other_city)
                 
-                # Now update the city position
+                # Convert scene position to center coordinates (city coordinates are centers)
                 city.x, city.y = x, y
                 
                 # Update trade route if city has one
                 if city.trade_route and city.trade_route.trade_points:
-                    # Get new center coordinates
-                    center_x, center_y = self._get_city_center(city)
+                    # Get new center coordinates (already stored as center)
+                    center_x, center_y = city.x, city.y
                     
                     # Insert new center point at the beginning of trade route
                     new_point = ed.TradePoint(x=center_x, y=center_y)
@@ -2385,7 +2368,7 @@ class MainWindow(QMainWindow):
                 
                 # Update all affected trade routes that ended at the old Our City position
                 if affected_cities:
-                    new_center_x, new_center_y = self._get_city_center(city)
+                    new_center_x, new_center_y = city.x, city.y
                     
                     for other_city in affected_cities:
                         # Add new endpoint to match new Our City position
@@ -2395,7 +2378,11 @@ class MainWindow(QMainWindow):
                         # Re-render the updated trade route
                         self.render_trade_route(other_city)
                 
-                self._place_city_marker(city, x, y)
+                # Convert center coordinates to top-left for scene placement
+                pixmap = self._pixmap_for_city(city)
+                top_left_x = x - pixmap.width() // 2
+                top_left_y = y - pixmap.height() // 2
+                self._place_city_marker(city, top_left_x, top_left_y)
             return
         else:
             # Unified entry point now
@@ -2495,6 +2482,7 @@ class MainWindow(QMainWindow):
 
 
     def _place_city_marker(self, city, x, y):
+        """Place a city marker at the given top-left coordinates (x, y are top-left for scene placement)."""
         pm = self._pixmap_for_city(city)
         if self.bg_item is None:
             return
@@ -2682,7 +2670,6 @@ class MainWindow(QMainWindow):
             return
 
         # Ensure there's an empire
-       
         if not self.state.check_if_empire():
             self.state.new_empire()
         empire = self.state.current_empire_object
@@ -2695,22 +2682,37 @@ class MainWindow(QMainWindow):
                 if resp == QMessageBox.No:
                     return
                 self._remove_city_marker(ours)
+                # Store center coordinates in city data
                 ours.x, ours.y = x, y
-                self._place_city_marker(ours, x, y)
+                # Convert to top-left for scene placement
+                pixmap = self._pixmap_for_city(ours)
+                top_left_x = x - pixmap.width() // 2
+                top_left_y = y - pixmap.height() // 2
+                self._place_city_marker(ours, top_left_x, top_left_y)
                 return
 
+            # Create new "Our City" with center coordinates
             ours = ed.City(name="Our City", x=x, y=y, type=ed.CityType.OURS, sells=[])
             empire.cities.append(ours)
-            self._place_city_marker(ours, x, y)
+            # Convert to top-left for scene placement
+            pixmap = self._pixmap_for_city(ours)
+            top_left_x = x - pixmap.width() // 2
+            top_left_y = y - pixmap.height() // 2
+            self._place_city_marker(ours, top_left_x, top_left_y)
             return
 
         # Other city types: create freely
         ctype, default_name = self._citytype_and_name_for_kind(kind)
         if ctype is None:
             return
+        # Store center coordinates in city data
         city = ed.City(name=default_name, x=x, y=y, type=ctype, sells=[])
         empire.cities.append(city)
-        self._place_city_marker(city, x, y)
+        # Convert to top-left for scene placement
+        pixmap = self._pixmap_for_city(city)
+        top_left_x = x - pixmap.width() // 2
+        top_left_y = y - pixmap.height() // 2
+        self._place_city_marker(city, top_left_x, top_left_y)
 
     # Back-compat: keep the original name, delegate to new method
     def handle_drop_city(self, scene_pos):
