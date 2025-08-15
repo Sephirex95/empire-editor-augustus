@@ -272,6 +272,11 @@ class MainWindow(QMainWindow):
         # UI wiring
         self.add_city_icons_to_list()
         self.ui.actionSelect_background_Image.triggered.connect(self.load_background_image)
+        
+        # Connect XML file operations
+        self.ui.actionOpen.triggered.connect(self.open_empire_xml)
+        self.ui.actionSave.triggered.connect(self.save_empire_xml)
+        
         self.ui.listWidget.itemClicked.connect(self.on_item_clicked)
 
         # Drag handling
@@ -337,6 +342,130 @@ class MainWindow(QMainWindow):
             return empire.cities.index(city)
         except ValueError:
             return None
+        
+        
+    def open_empire_xml(self):
+        """Open and load empire from XML file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open Empire XML", "", "XML Files (*.xml);;All Files (*)"
+        )
+        if not file_path:
+            return  # User cancelled
+        
+        try:
+            # Read the XML file
+            with open(file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+            
+            # Check if we have unsaved changes
+            if self.state.check_if_empire() and self.state.has_any_data():
+                resp = QMessageBox.question(
+                    self, "Load Empire",
+                    "You have unsaved work in the current empire.\n"
+                    "Load new empire and discard current progress?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if resp != QMessageBox.Yes:
+                    return
+            
+            # Load empire from XML
+            empire = ed.Empire.from_xml_string(xml_content)
+            self.state.current_empire_object = empire
+            
+            # Clear existing visuals and render loaded empire
+            self._render_loaded_empire()
+            
+            QMessageBox.information(
+                self, "Success", f"Empire loaded from {file_path}",
+                QMessageBox.Ok
+            )
+            
+        except FileNotFoundError:
+            QMessageBox.critical(
+                self, "File Error", f"File not found: {file_path}",
+                QMessageBox.Ok
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Load Error", f"Failed to load empire:\n{str(e)}",
+                QMessageBox.Ok
+            )
+
+    def save_empire_xml(self):
+        """Save current empire to XML file."""
+        if not self.state.check_if_empire():
+            QMessageBox.warning(
+                self, "No Empire", "No empire to save. Create an empire first.",
+                QMessageBox.Ok
+            )
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Empire XML", "", "XML Files (*.xml);;All Files (*)"
+        )
+        if not file_path:
+            return  # User cancelled
+        
+        # Add .xml extension if not present
+        if not file_path.lower().endswith('.xml'):
+            file_path += '.xml'
+        
+        try:
+            # Generate XML and save to file
+            empire = self.state.current_empire_object
+            empire.write_xml(file_path)
+            
+            QMessageBox.information(
+                self, "Success", f"Empire saved to {file_path}",
+                QMessageBox.Ok
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Save Error", f"Failed to save empire:\n{str(e)}",
+                QMessageBox.Ok
+            )
+
+    def _render_loaded_empire(self):
+        """Render the loaded empire data onto the scene."""
+        empire = self.state.current_empire_object
+        if not empire:
+            return
+        
+        # Clear existing city markers and visual state
+        self.city_items.clear()
+        self._clear_scene_state()
+        
+        # If scene has items, clear and reset (but keep background)
+        if self.scene and self.bg_item:
+            # Remove all items except background
+            for item in list(self.scene.items()):
+                if item != self.bg_item:
+                    self.scene.removeItem(item)
+        
+        # Place cities on scene
+        if hasattr(empire, 'cities'):
+            for city in empire.cities:
+                self._place_city_on_scene(city)
+        
+        # Render empire border if it exists
+        if hasattr(empire, 'border') and empire.border:
+            self.empire_border = True
+            self.render_empire_border()
+        
+        # Render trade routes for cities that have them
+        if hasattr(empire, 'cities'):
+            for city in empire.cities:
+                if hasattr(city, 'trade_route') and city.trade_route and city.trade_route.trade_points:
+                    self.render_trade_route(city)
+
+    def _place_city_on_scene(self, city):
+        """Place a city from loaded data onto the scene."""
+        if not hasattr(city, 'x') or not hasattr(city, 'y'):
+            return
+        
+        self._place_city_marker(city, city.x, city.y)
     def delete_trade_route_from_item(self, item):
         """Delete trade route path from context menu selection."""
         city_index = item.data(Qt.UserRole + 1)
@@ -1812,6 +1941,9 @@ class MainWindow(QMainWindow):
         half = handle_size / 2.0
         hpen = QPen(Qt.black, 1)
         hbrush = QBrush(Qt.white)
+
+
+
         for x, y in pts:
             p = self.bg_item.mapToScene(x, y)
             rect = self.scene.addRect(p.x() - half, p.y() - half, handle_size, handle_size, hpen, hbrush)

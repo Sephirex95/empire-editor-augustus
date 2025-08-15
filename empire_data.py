@@ -2,6 +2,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
+import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import Element, SubElement, tostring
+from xml.dom import minidom
 
 
 # ---------- Enums map 1:1 to XML attribute values ----------
@@ -307,105 +310,160 @@ class Empire:
     @classmethod
     def _child(cls, el, tag):
         return el.find(tag)
-
+    
+    @staticmethod
+    def _get_attr_str(el, name, default=None):
+        v = el.get(name) if el is not None else None
+        return v if v is not None and v != "" else default
+    
+    @staticmethod
+    def _get_attr_int(el, name, default=None):
+        try:
+            v = el.get(name) if el is not None else None
+            if v is None or v == "":
+                return default
+            return int(v)
+        except Exception:
+            return default
+    
+    @staticmethod
+    def _get_attr_bool(el, name, default=False):
+        v = el.get(name) if el is not None else None
+        if v is None:
+            return default
+        return str(v).strip().lower() == "true"
+    
+    
     @classmethod
     def from_xml_string(cls, xml_text):
         tree = ET.ElementTree(ET.fromstring(xml_text))
         root = tree.getroot()
         if root.tag != "empire":
             raise ValueError("Root tag must be <empire>")
-        version = int(root.get("version", "1"))
-
+    
+        version = cls._get_attr_int(root, "version", 1)
+    
         # ornaments
         ornaments = []
         for o_el in root.findall("ornament"):
-            otype = o_el.get("type")
+            otype = cls._get_attr_str(o_el, "type")
             if otype:
                 ornaments.append(Ornament(otype))
-
+    
         # border
         border = None
         b_el = cls._child(root, "border")
         if b_el is not None:
-            density_attr = b_el.get("density")
-            density = int(density_attr) if density_attr is not None else None
+            density = cls._get_attr_int(b_el, "density", None)
             edges = []
             for e_el in b_el.findall("edge"):
-                x = int(e_el.get("x"))
-                y = int(e_el.get("y"))
-                hidden = cls._parse_bool(e_el.get("hidden")) if e_el.get("hidden") is not None else False
+                x = cls._get_attr_int(e_el, "x", None)
+                y = cls._get_attr_int(e_el, "y", None)
+                if x is None or y is None:
+                    # skip incomplete edge
+                    continue
+                hidden = cls._get_attr_bool(e_el, "hidden", False)
                 edges.append(Edge(x, y, hidden))
-            border = Border(density, edges)
-
+            # only build Border if there is something meaningful
+            if density is not None or edges:
+                border = Border(density, edges)
+    
         # cities
         cities = []
         cities_el = cls._child(root, "cities")
         if cities_el is not None:
             for c_el in cities_el.findall("city"):
-                name = c_el.get("name")
-                x = int(c_el.get("x"))
-                y = int(c_el.get("y"))
-                ctype = c_el.get("type") or CityType.TRADE
-
-                # trade route bits
-                trade_route = None
-                tr_cost = c_el.get("trade_route_cost")
-                tr_type = c_el.get("trade_route_type")
+                name = cls._get_attr_str(c_el, "name", None)
+                x = cls._get_attr_int(c_el, "x", None)
+                y = cls._get_attr_int(c_el, "y", None)
+                ctype = cls._get_attr_str(c_el, "type", None) or CityType.TRADE
+    
+                # Trade route bits (all optional)
+                tr_cost = cls._get_attr_int(c_el, "trade_route_cost", None)
+                tr_type = cls._get_attr_str(c_el, "trade_route_type", None)
+    
+                # trade_points (optional)
                 trade_points = []
                 tp_el = cls._child(c_el, "trade_points")
                 if tp_el is not None:
                     for pt in tp_el.findall("point"):
-                        trade_points.append(TradePoint(int(pt.get("x")), int(pt.get("y"))))
+                        px = cls._get_attr_int(pt, "x", None)
+                        py = cls._get_attr_int(pt, "y", None)
+                        if px is None or py is None:
+                            continue
+                        trade_points.append(TradePoint(px, py))
+    
+                trade_route = None
                 if tr_cost is not None or tr_type is not None or trade_points:
                     trade_route = TradeRoute(
-                        cost=int(tr_cost) if tr_cost is not None else None,
+                        cost=tr_cost,
                         type=tr_type,
-                        trade_points=trade_points,
+                        trade_points=trade_points
                     )
-
-                # buys/sells
+    
+                # buys / sells (optional)
                 buys = []
                 sells = []
+    
                 buys_el = cls._child(c_el, "buys")
                 if buys_el is not None:
                     for r in buys_el.findall("resource"):
-                        rtype = r.get("type")
-                        amount = r.get("amount")
-                        buys.append(Resource(rtype, int(amount) if amount is not None else None))
+                        rtype = cls._get_attr_str(r, "type", None)
+                        if not rtype:
+                            continue
+                        amount = cls._get_attr_int(r, "amount", None)
+                        buys.append(Resource(rtype, amount))
+    
                 sells_el = cls._child(c_el, "sells")
                 if sells_el is not None:
                     for r in sells_el.findall("resource"):
-                        rtype = r.get("type")
-                        amount = r.get("amount")
-                        # omit amount for home city accepted; None is fine
-                        sells.append(Resource(rtype, int(amount) if amount is not None else None))
-
-                city = City(name, x, y, ctype, buys, sells, trade_route)
-                cities.append(city)
-
-        # invasion paths
+                        rtype = cls._get_attr_str(r, "type", None)
+                        if not rtype:
+                            continue
+                        amount = cls._get_attr_int(r, "amount", None)
+                        sells.append(Resource(rtype, amount))
+    
+                # Build city even if some attributes are missing
+                # (name/x/y can be None if upstream data is partial)
+                cities.append(City(name, x, y, ctype, buys, sells, trade_route))
+    
+        # invasion paths (optional)
         invasion_paths = []
         inv_el = cls._child(root, "invasion_paths")
         if inv_el is not None:
             for p_el in inv_el.findall("path"):
                 battles = []
                 for b in p_el.findall("battle"):
-                    battles.append(Battle(int(b.get("x")), int(b.get("y"))))
-                invasion_paths.append(InvasionPath(battles))
-
-        # distant battle paths
+                    bx = cls._get_attr_int(b, "x", None)
+                    by = cls._get_attr_int(b, "y", None)
+                    if bx is None or by is None:
+                        continue
+                    battles.append(Battle(bx, by))
+                if battles:
+                    invasion_paths.append(InvasionPath(battles))
+    
+        # distant battle paths (optional)
         distant_battle_paths = []
         dist_el = cls._child(root, "distant_battle_paths")
         if dist_el is not None:
             for p_el in dist_el.findall("path"):
-                ptype = p_el.get("type")
-                start_x = int(p_el.get("start_x"))
-                start_y = int(p_el.get("start_y"))
+                ptype = cls._get_attr_str(p_el, "type", None)
+                start_x = cls._get_attr_int(p_el, "start_x", None)
+                start_y = cls._get_attr_int(p_el, "start_y", None)
+    
                 waypoints = []
                 for w in p_el.findall("waypoint"):
-                    waypoints.append(Waypoint(int(w.get("num_months")), int(w.get("x")), int(w.get("y"))))
-                distant_battle_paths.append(DistantBattlePath(ptype, start_x, start_y, waypoints))
-
+                    months = cls._get_attr_int(w, "num_months", None)
+                    wx = cls._get_attr_int(w, "x", None)
+                    wy = cls._get_attr_int(w, "y", None)
+                    if months is None or wx is None or wy is None:
+                        continue
+                    waypoints.append(Waypoint(months, wx, wy))
+    
+                # Create the path even if some attrs are missing; skip if nothing useful
+                if ptype is not None or start_x is not None or start_y is not None or waypoints:
+                    distant_battle_paths.append(DistantBattlePath(ptype, start_x, start_y, waypoints))
+    
         return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths)
 
     @classmethod

@@ -36,7 +36,9 @@ class Ui_MainWindow(object):
     
         # Actions
         self.actionOpen = QAction(MainWindow)
+        self.actionOpen.setShortcut("Ctrl+O")  # Standard Open shortcut
         self.actionSave = QAction(MainWindow)
+        self.actionSave.setShortcut("Ctrl+S")  # Standard Save shortcut
         self.actionSelect_background_Image = QAction(MainWindow)
         
         # Add the "Default Empire Map" action
@@ -105,8 +107,8 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "MainWindow", None))
-        self.actionOpen.setText(QCoreApplication.translate("MainWindow", "Open", None))
-        self.actionSave.setText(QCoreApplication.translate("MainWindow", "Save", None))
+        self.actionOpen.setText(QCoreApplication.translate("MainWindow", "Open Empire XML", None))
+        self.actionSave.setText(QCoreApplication.translate("MainWindow", "Save Empire XML", None))
         self.actionSelect_background_Image.setText(QCoreApplication.translate("MainWindow", "Select background Image", None))
         self.menuEmpire_editor_augustus.setTitle(QCoreApplication.translate("MainWindow", "File", None))
         self.menuMap_Settings.setTitle(QCoreApplication.translate("MainWindow", "Map Settings", None))
