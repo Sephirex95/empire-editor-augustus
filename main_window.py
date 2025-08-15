@@ -310,7 +310,7 @@ class MainWindow(QMainWindow):
         self.add_city_icons_to_list()
         self.ui.actionSelect_background_Image.triggered.connect(lambda: self.set_background_image(None, True))
         self.ui.actionDefaultEmpireMap.triggered.connect(self.on_default_empire_map_selected)
-
+        #self.ui.actionNew.triggered.connect()
         # Connect XML file operations
         self.ui.actionOpen.triggered.connect(self.open_empire_xml)
         self.ui.actionSave.triggered.connect(self.save_empire_xml)
