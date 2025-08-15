@@ -25,6 +25,7 @@ class EmpCityTypes(Enum):
     OUR = auto()
     DISTANT = auto()
     TRADE = auto()
+    ROMAN = auto()
 
 class EmpObjTypes(Enum):
     EMPIRE_EDGE = auto()
@@ -110,32 +111,60 @@ class ProgramState:
         try:
             def crop5x5(img):
                 return img.crop((0, 0, 5, 5))  # (left, top, right, bottom), bottom is exclusive
-
             # augustus assets used via layering:
             bits = self.images["empire_bits"]
             self.images["sea_dot"]  = crop5x5(bits[102])
             self.images["land_dot"] = crop5x5(bits[94])
+            # Store flag images separately
+            self.images["our_flag"] = bits[2]
+            self.images["trade_flag"] = bits[9] 
+            self.images["roman_flag"] = bits[16]
+            self.images["distant_flag"] = bits[23]
+            
+            # Helper function to overlay flag on city icon
+            def overlay_flag_on_city(city_pil, flag_pil, x_offset = 0, y_offset = 0):
+                """Overlay a flag image on the top-right corner of a city icon."""
+                # Create a copy of the city image to avoid modifying the original
+                result = city_pil.copy()
+                # Position flag in top-right corner with small margin
+                flag_x = x_offset
+                flag_y = y_offset
+                # Paste flag with alpha blending if possible
+                if flag_pil.mode == 'RGBA':
+                    result.paste(flag_pil, (flag_x, flag_y), flag_pil)
+                else:
+                    result.paste(flag_pil, (flag_x, flag_y))
+                
+                return result
+            
+            # Create city icons with flags overlaid
+            our_city_base = bits[0]
+            roman_city_base = bits[7]
+            distant_city_base = bits[21]
+            
+            # Create flagged versions
+            our_city_with_flag = overlay_flag_on_city(our_city_base, self.images["our_flag"],17,5)
+            roman_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["roman_flag"],22,5)
+            trade_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["trade_flag"],22,5)    
+            distant_city_with_flag = overlay_flag_on_city(distant_city_base, self.images["distant_flag"],12,5)
+            
             # images from vanilla files
             self.elements = [
-                {"name": "Our City",      "pil": bits[0],   "kind": EmpCityTypes.OUR},
-                {"name": "Our Flag",      "pil": bits[1],   "kind": EmpObjTypes.OUR_FLAG},
-                {"name": "Roman City",    "pil": bits[7],   "kind": EmpCityTypes.TRADE},
-                {"name": "Trade Flag",    "pil": bits[8],   "kind": EmpObjTypes.TRADE_FLAG},
-                {"name": "Roman Flag",    "pil": bits[15],  "kind": EmpObjTypes.ROMAN_FLAG},
-                {"name": "Distant City",  "pil": bits[21],  "kind": EmpCityTypes.DISTANT},
-                {"name": "Distant Flag",  "pil": bits[22],  "kind": EmpObjTypes.DISTANT_FLAG},
-                {"name": "Empire Edge",   "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE},
-                #not yet used:
-                {"name": "Distant Battle","pil": bits[28],  "kind": EmpObjTypes.DISTANT_BATTLE},
-                {"name": "Our Legion",    "pil": bits[36],  "kind": EmpObjTypes.OUR_LEGION},
-                {"name": "Natives",       "pil": bits[52],  "kind": EmpObjTypes.NATIVES},
+                {"name": "Our City",      "pil": our_city_with_flag,   "kind": EmpCityTypes.OUR, "enabled": True},
+                {"name": "Roman City",    "pil": roman_city_with_flag, "kind": EmpCityTypes.ROMAN, "enabled": True},
+                {"name": "Trade City",    "pil": trade_city_with_flag, "kind": EmpCityTypes.TRADE, "enabled": True},
+                {"name": "Distant City",  "pil": distant_city_with_flag, "kind": EmpCityTypes.DISTANT, "enabled": True},
+                {"name": "Empire Edge",   "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE, "enabled": True},
+                # Disabled items (commented out for now)
 
+                {"name": "Distant Battle","pil": bits[28],  "kind": EmpObjTypes.DISTANT_BATTLE, "enabled": False},
+                {"name": "Our Legion",    "pil": bits[36],  "kind": EmpObjTypes.OUR_LEGION, "enabled": False},
+                {"name": "Natives",       "pil": bits[52],  "kind": EmpObjTypes.NATIVES, "enabled": False},
             ]
         except (KeyError, IndexError):
             self.init_failed = True
             QMessageBox.critical(None, "Error", "Error loading selectable elements.", QMessageBox.Ok)
-
-
+            
     def reset_state(self):
         self.images.clear()
         self.selected_empire_image = None
@@ -478,10 +507,14 @@ class MainWindow(QMainWindow):
             top_left_x = city.x - pixmap.width() // 2
             top_left_y = city.y - pixmap.height() // 2
             self._place_city_marker(city, top_left_x, top_left_y)
-    def delete_trade_route_from_item(self, item):
+
+    def delete_trade_route_from_item(self, item, city=None):
         """Delete trade route path from context menu selection."""
-        city_index = item.data(Qt.UserRole + 1)
-        city = self._get_city_by_index(city_index)
+        if city is None:
+            city_index = item.data(Qt.UserRole + 1)
+            city = self._get_city_by_index(city_index)
+        else:
+            city_index = self._get_city_index(city) 
         if city and city.trade_route and city.trade_route.trade_points:
             resp = QMessageBox.question(
                 self, "Delete Trade Route",
@@ -496,6 +529,14 @@ class MainWindow(QMainWindow):
                 # Clear only the plotted path, keep the trade route object
                 city.trade_route.trade_points.clear()
                 self.clear_trade_route_visuals(city_index)
+                return True
+        else:
+            try:
+                self.clear_trade_route_selection_overlay()
+                self.clear_trade_route_visuals(city_index)
+            except Exception as ex:
+                print(f"Error clearing trade route visuals: {ex}")
+        return False
 
     def edit_city_from_trade_route_item(self, item):
         """Edit city from trade route context menu selection."""
@@ -1819,9 +1860,6 @@ class MainWindow(QMainWindow):
         half = handle_size / 2.0
         hpen = QPen(Qt.black, 1)
         hbrush = QBrush(Qt.white)
-
-
-
         for x, y in pts:
             p = self.bg_item.mapToScene(x, y)
             rect = self.scene.addRect(p.x() - half, p.y() - half, handle_size, handle_size, hpen, hbrush)
@@ -2159,14 +2197,16 @@ class MainWindow(QMainWindow):
         new_type = city_obj.city_type
         
         # If city type changed from trade to non-trade, remove trade route
-        if (old_type in (ed.CityType.TRADE, ed.CityType.ROMAN, ed.CityType.VULNERABLE) and
-            new_type not in (ed.CityType.TRADE, ed.CityType.ROMAN, ed.CityType.VULNERABLE, ed.CityType.OURS)):
+        if (old_type == ed.CityType.TRADE and new_type != ed.CityType.TRADE):
             # Clear trade route for non-trade cities
             city_index = self._get_city_index(city_obj)
-            if city_index is not None:
-                self.clear_trade_route_visuals(city_index)
-            if city_obj.trade_route:
-                city_obj.trade_route.trade_points = []
+            if self.delete_trade_route_from_item(None,city=city_obj):
+                if city_index is not None:
+                    self.clear_trade_route_visuals(city_index)
+                if city_obj.trade_route:
+                    city_obj.trade_route.trade_points = []
+                    city_obj.trade_route = None 
+
         
         # validations
         if city_obj.city_type == ed.CityType.OURS: #TODO: replace this by normal property check, not getattr
@@ -2211,7 +2251,6 @@ class MainWindow(QMainWindow):
         kind = self.selected_kind
         if kind is None:
             return
-
         # City types
         if isinstance(kind, EmpCityTypes):
             self.handle_city_drop(scene_pos)
@@ -2292,6 +2331,10 @@ class MainWindow(QMainWindow):
     def add_city_icons_to_list(self):
         self.ui.listWidget.clear()
         for el in self.state.elements:
+            # Skip disabled elements
+            if not el.get("enabled", True):
+                continue
+                
             item = QListWidgetItem(el["name"])
             item.setIcon(QIcon(self.pil_to_qpixmap(el["pil"])))
             item.setSizeHint(QSize(100, 80))
@@ -2327,20 +2370,16 @@ class MainWindow(QMainWindow):
         if kind == EmpCityTypes.OUR:
             return ed.CityType.OURS, "Our City"
         elif kind == EmpCityTypes.TRADE:
-            # handle possible naming differences in your model
-            trade_type = ed.CityType.TRADE
-            return trade_type, "Roman City"
+            return ed.CityType.TRADE, "Trade City"
+        elif kind == EmpCityTypes.ROMAN:
+            return ed.CityType.ROMAN, "Roman City"
         elif kind == EmpCityTypes.DISTANT:
             return ed.CityType.DISTANT, "Distant City"
         else:
             return None, "City"
     
     def _pixmap_for_city(self, city) -> QPixmap:
-        # 0) If we have a pending drop pixmap, use it EXACTLY
-        #pm = self.pending_drop_pixmap
-        #if isinstance(pm, QPixmap) and not pm.isNull():
-            #return pm
-    
+        # this should be adjusted, its GPTs hypochondria checking a million things instead of inheriting values
         # 1) Otherwise, try the currently selected item (if any) — use native pixmap size
         if self.selected_item is not None:
             try:
@@ -2359,11 +2398,9 @@ class MainWindow(QMainWindow):
         try:
             if ct == ed.CityType.OURS:
                 kind = EmpCityTypes.OUR
-            elif ct in (
-                ed.CityType.TRADE,
-                ed.CityType.ROMAN,
-                ed.CityType.VULNERABLE,
-            ):
+            elif ct in (ed.CityType.ROMAN, ed.CityType.VULNERABLE):
+                kind = EmpCityTypes.ROMAN
+            elif ct == ed.CityType.TRADE:
                 kind = EmpCityTypes.TRADE
             elif ct == ed.CityType.DISTANT:
                 kind = EmpCityTypes.DISTANT
