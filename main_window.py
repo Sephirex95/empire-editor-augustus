@@ -232,6 +232,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+        
+        # Set window icon
+        import os
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "editor.ico")
+        if os.path.exists(icon_path):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(icon_path))
+        
         self.no_bg_item = None
         self.bg_item = None  # the background QGraphicsPixmapItem
         # Edge drawing state
