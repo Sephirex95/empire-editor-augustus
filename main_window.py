@@ -1,16 +1,16 @@
 import sys
 import os
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QMainWindow, QFileDialog, QGraphicsScene, QGraphicsView,
     QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox,
     QLabel, QDialog, QWidget, QGraphicsEllipseItem, QGraphicsLineItem,
     QGraphicsItemGroup,  QGraphicsItem,  QMenu, QMenuBar
 
 )
-from PySide6.QtGui import QIcon, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor
-from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QPoint, QRectF, QSizeF, QPointF, QTimer
+from PyQt6.QtGui import QIcon, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor
+from PyQt6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QPoint, QRectF, QSizeF, QPointF, QTimer
 from sg_reader import SgFileReader
-from ui_empire_editor import Ui_MainWindow
+from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog
 
 import empire_data as ed
 import edit_city_logic as emp_dlg
@@ -66,7 +66,7 @@ class ProgramState:
 
     def load_c3_folder(self):
         config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
-        settings = QSettings(config_path, QSettings.IniFormat)
+        settings = QSettings(config_path, QSettings.Format.IniFormat)
         self.c3_main_path = settings.value("c3_main_folder", type=str)
 
         if not self.c3_main_path:
@@ -82,7 +82,7 @@ class ProgramState:
                 return True
             else:
                 QMessageBox.critical(
-                    None, "Invalid Folder", "Please select a valid Caesar 3 directory.", QMessageBox.Ok
+                    None, "Invalid Folder", "Please select a valid Caesar 3 directory.", QMessageBox.StandardButton.Ok
                 )
                 return False
         return True
@@ -95,7 +95,7 @@ class ProgramState:
                 None,
                 "Missing Files",
                 "The following required files are missing:\n" + "\n".join(missing),
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
             return False
         return True
@@ -163,7 +163,7 @@ class ProgramState:
             ]
         except (KeyError, IndexError):
             self.init_failed = True
-            QMessageBox.critical(None, "Error", "Error loading selectable elements.", QMessageBox.Ok)
+            QMessageBox.critical(None, "Error", "Error loading selectable elements.", QMessageBox.StandardButton.Ok)
             
     def reset_state(self):
         self.images.clear()
@@ -298,11 +298,11 @@ class MainWindow(QMainWindow):
         self.scene = QGraphicsScene(self)
         self.ui.graphicsView.setScene(self.scene)
 
-        self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)
+        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
 
         self.ui.graphicsView.viewport().setMouseTracking(True)
         
-        self.ui.graphicsView.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        self.ui.graphicsView.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
         self.show_no_background_message()               # show placeholder on startup
 
@@ -310,7 +310,7 @@ class MainWindow(QMainWindow):
         self.add_city_icons_to_list()
         self.ui.actionSelect_background_Image.triggered.connect(lambda: self.set_background_image(None, True))
         self.ui.actionDefaultEmpireMap.triggered.connect(self.on_default_empire_map_selected)
-        #self.ui.actionNew.triggered.connect()
+        self.ui.actionNew.triggered.connect(self.on_new_empire)
         # Connect XML file operations
         self.ui.actionOpen.triggered.connect(self.open_empire_xml)
         self.ui.actionSave.triggered.connect(self.save_empire_xml)
@@ -400,10 +400,10 @@ class MainWindow(QMainWindow):
                     self, "Load Empire",
                     "You have unsaved work in the current empire.\n"
                     "Load new empire and discard current progress?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
                 )
-                if resp != QMessageBox.Yes:
+                if resp != QMessageBox.StandardButton.Yes:
                     return
             
             # Load empire from XML
@@ -415,18 +415,18 @@ class MainWindow(QMainWindow):
             
             QMessageBox.information(
                 self, "Success", f"Empire loaded from {file_path}",
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
             
         except FileNotFoundError:
             QMessageBox.critical(
                 self, "File Error", f"File not found: {file_path}",
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
         except Exception as e:
             QMessageBox.critical(
                 self, "Load Error", f"Failed to load empire:\n{str(e)}",
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
 
     def save_empire_xml(self):
@@ -434,7 +434,7 @@ class MainWindow(QMainWindow):
         if not self.state.check_if_empire():
             QMessageBox.warning(
                 self, "No Empire", "No empire to save. Create an empire first.",
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
             return
         
@@ -455,13 +455,13 @@ class MainWindow(QMainWindow):
             
             QMessageBox.information(
                 self, "Success", f"Empire saved to {file_path}",
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
             
         except Exception as e:
             QMessageBox.critical(
                 self, "Save Error", f"Failed to save empire:\n{str(e)}",
-                QMessageBox.Ok
+                QMessageBox.StandardButton.Ok
             )
 
     def _render_loaded_empire(self):
@@ -519,7 +519,7 @@ class MainWindow(QMainWindow):
     def delete_trade_route_from_item(self, item, city=None):
         """Delete trade route path from context menu selection."""
         if city is None:
-            city_index = item.data(Qt.UserRole + 1)
+            city_index = item.data(Qt.ItemDataRole.UserRole + 1)
             city = self._get_city_by_index(city_index)
         else:
             city_index = self._get_city_index(city) 
@@ -527,10 +527,10 @@ class MainWindow(QMainWindow):
             resp = QMessageBox.question(
                 self, "Delete Trade Route",
                 f"Delete trade route path for {city.name}?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if resp == QMessageBox.Yes:
+            if resp == QMessageBox.StandardButton.Yes:
                 # Clear selection if this was the selected route
                 if self.selected_trade_route_city == city:
                     self.clear_trade_route_selection_overlay()
@@ -548,7 +548,7 @@ class MainWindow(QMainWindow):
 
     def edit_city_from_trade_route_item(self, item):
         """Edit city from trade route context menu selection."""
-        city_index = item.data(Qt.UserRole + 1)
+        city_index = item.data(Qt.ItemDataRole.UserRole + 1)
         city = self._get_city_by_index(city_index)
         if city:
             self._edit_city(city)
@@ -614,13 +614,13 @@ class MainWindow(QMainWindow):
             return False
 
         # 2) Dispatch by event type
-        if et == QEvent.MouseMove:
+        if et == QEvent.Type.MouseMove:
             return self._handle_mouse_move(event)
     
-        elif et in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+        elif et in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
             return self._handle_mouse_click(event)
             
-        elif et == QEvent.KeyPress:
+        elif et == QEvent.Type.KeyPress:
             return self._handle_key_press(event)
     
         return QObject.eventFilter(self, obj, event)
@@ -630,7 +630,7 @@ class MainWindow(QMainWindow):
         key = event.key()
         
         # Escape key cancels various operations
-        if key == Qt.Key_Escape:
+        if key == Qt.Key.Key_Escape:
             if self.vertex_editing_active:
                 self.cancel_vertex_editing()
                 return True
@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
                 return True
         
         # Backspace/Delete for undo in drawing modes
-        elif key in (Qt.Key_Backspace, Qt.Key_Delete):
+        elif key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
             if self.trade_drawing_active:
                 self._trade_undo_last_point()
                 return True
@@ -686,12 +686,12 @@ class MainWindow(QMainWindow):
         et = event.type()
     
         # Vertex editing mode
-        if self.vertex_editing_active and et == QEvent.MouseButtonPress:
-            if btn == Qt.RightButton:
+        if self.vertex_editing_active and et == QEvent.Type.MouseButtonPress:
+            if btn == Qt.MouseButton.RightButton:
                 # Right-click cancels vertex editing
                 self.cancel_vertex_editing()
                 return True
-            elif btn == Qt.LeftButton:
+            elif btn == Qt.MouseButton.LeftButton:
                 # Left-click finishes vertex editing
                 scene_pos = view.mapToScene(vp.mapFromGlobal(gp))
                 self.finish_vertex_editing(scene_pos)
@@ -702,15 +702,15 @@ class MainWindow(QMainWindow):
             return self._handle_drag_click(event, gp, inside_view)
     
         # Edge drawing mode
-        if self.edge_drawing_active and et == QEvent.MouseButtonPress:
+        if self.edge_drawing_active and et == QEvent.Type.MouseButtonPress:
             return self._handle_edge_click(event, gp, inside_view)
 
         # Trade drawing mode
-        if self.trade_drawing_active and et == QEvent.MouseButtonPress:
+        if self.trade_drawing_active and et == QEvent.Type.MouseButtonPress:
             return self._handle_trade_click(event, gp, inside_view)
         
         # Normal mode selection
-        if not self.is_dragging and not self.edge_drawing_active and et == QEvent.MouseButtonPress:
+        if not self.is_dragging and not self.edge_drawing_active and et == QEvent.Type.MouseButtonPress:
             return self._handle_normal_click(event, gp, inside_view)
     
         return False
@@ -722,18 +722,18 @@ class MainWindow(QMainWindow):
         
     def _handle_drag_click(self, event, gp, inside_view):
         # cancel move/drag on right click (press or release), anywhere
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             self.moving_city = None
             self.deselect_item()
             return True
     
-        if event.type() == QEvent.MouseButtonPress:
-            if event.button() == Qt.LeftButton and not inside_view:
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton and not inside_view:
                 self.deselect_item()
                 return True
     
-        elif event.type() == QEvent.MouseButtonRelease:
-            if event.button() == Qt.LeftButton:
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
                 self.deselect_item()
                 if inside_view:
                     view_pos = self.ui.graphicsView.mapFromGlobal(gp)
@@ -745,10 +745,10 @@ class MainWindow(QMainWindow):
 
     
     def _handle_edge_click(self, event, gp, inside_view):
-        if event.button() == Qt.RightButton or not inside_view:
+        if event.button() == Qt.MouseButton.RightButton or not inside_view:
             self._edge_prompt_incomplete()
             return True
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
             xy = self._scene_to_image_xy(scene_pos)
             if xy is None:
@@ -765,7 +765,7 @@ class MainWindow(QMainWindow):
             
     def _handle_normal_click(self, event, gp, inside_view):
         # --- RIGHT CLICK ---
-        if event.button() == Qt.RightButton and inside_view:
+        if event.button() == Qt.MouseButton.RightButton and inside_view:
             scene_pos = self.ui.graphicsView.mapToScene(
                 self.ui.graphicsView.viewport().mapFromGlobal(gp)
             )
@@ -783,7 +783,7 @@ class MainWindow(QMainWindow):
             return True
     
         # --- LEFT CLICK ---
-        if event.button() == Qt.LeftButton and inside_view:
+        if event.button() == Qt.MouseButton.LeftButton and inside_view:
             scene_pos = self.ui.graphicsView.mapToScene(
                 self.ui.graphicsView.viewport().mapFromGlobal(gp)
             )
@@ -817,9 +817,9 @@ class MainWindow(QMainWindow):
 
         # Trade route segment hit
         if hasattr(item, "data") and callable(item.data):
-            route_type = item.data(Qt.UserRole)
+            route_type = item.data(Qt.ItemDataRole.UserRole)
             if route_type == "TRADE_ROUTE":
-                city_index = item.data(Qt.UserRole + 1)
+                city_index = item.data(Qt.ItemDataRole.UserRole + 1)
                 city = self._get_city_by_index(city_index)
                 if city:
                     self.select_trade_route_overlay(city)
@@ -837,7 +837,7 @@ class MainWindow(QMainWindow):
 
         # Edge segment (hit proxy)
         if item in self.border_edge_hit_items:
-            self.selected_edge_index = item.data(Qt.UserRole + 1)
+            self.selected_edge_index = item.data(Qt.ItemDataRole.UserRole + 1)
             self.select_empire_border_overlay()
             self.selected_item = item
             # Create vertex handles for border editing
@@ -902,7 +902,7 @@ class MainWindow(QMainWindow):
     def select_item(self, item):
         self.deselect_all() # clear current selections first
         self.selected_item = item
-        self.selected_kind = item.data(Qt.UserRole)  # EmpCityTypes or EmpObjTypes
+        self.selected_kind = item.data(Qt.ItemDataRole.UserRole)  # EmpCityTypes or EmpObjTypes
         pixmap = item.icon().pixmap(self.ui.listWidget.iconSize())
         self.ui.graphicsView.setInteractive(False)
 
@@ -912,7 +912,7 @@ class MainWindow(QMainWindow):
         # Don't create a floating icon - use cursor instead
         self.is_dragging = True
         self.set_drawing_cursor(True, pixmap)
-        self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)
+        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
         
         self._apply_interactivity_to_all(False)
 
@@ -924,7 +924,7 @@ class MainWindow(QMainWindow):
         self.set_drawing_cursor(False)
         self.ui.graphicsView.setInteractive(True)
 
-        self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)  # not ScrollHandDrag
+        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)  # not ScrollHandDrag
     
         # FIX: also clear the QListWidget’s selection so it’s not visually highlighted
         self.ui.listWidget.clearSelection()
@@ -1054,11 +1054,11 @@ class MainWindow(QMainWindow):
     
     def _show_warning(self, title, message):
         """Show a standardized warning message box."""
-        return QMessageBox.warning(self, title, message, QMessageBox.Ok)
+        return QMessageBox.warning(self, title, message, QMessageBox.StandardButton.Ok)
     
-    def _show_question(self, title, message, default_button=QMessageBox.No):
+    def _show_question(self, title, message, default_button=QMessageBox.StandardButton.No):
         """Show a standardized question message box."""
-        return QMessageBox.question(self, title, message, QMessageBox.Yes | QMessageBox.No, default_button)
+        return QMessageBox.question(self, title, message, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, default_button)
     
     def _show_no_background_warning(self):
         """Show the standard 'no background' warning."""
@@ -1076,8 +1076,8 @@ class MainWindow(QMainWindow):
         return QMessageBox.warning(
             self, "Incomplete Border",
             "You have not closed the border shape. Would you like to save this border shape?",
-            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-            QMessageBox.Cancel
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel
         )
         
     def _show_incomplete_trade_route_dialog(self):
@@ -1085,8 +1085,8 @@ class MainWindow(QMainWindow):
         return QMessageBox.information(
             self, "Incomplete Trade Route",
             "This trade route doesn't end on our city. Would you like to save it anyway?",
-            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-            QMessageBox.Cancel
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel
         )
 
     def _clear_scene_state(self):
@@ -1137,7 +1137,7 @@ class MainWindow(QMainWindow):
                 self.clear_trade_route_visuals(city_index)
             empire.cities.remove(city)
         self._remove_city_marker(city)
-        if self.selected_item and self.selected_item.data(Qt.UserRole) == EmpCityTypes.OUR:
+        if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == EmpCityTypes.OUR:
             self.deselect_item()
 
     def clear_empire_border_visual(self):
@@ -1157,11 +1157,11 @@ class MainWindow(QMainWindow):
     
     def _handle_trade_click(self, event, gp, inside_view):
         """Handle mouse clicks during trade route drawing."""
-        if event.button() == Qt.RightButton or not inside_view:
+        if event.button() == Qt.MouseButton.RightButton or not inside_view:
             self._abort_trade_drawing()
             return True
 
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
             xy = self._scene_to_image_xy(scene_pos)
             if xy is None:
@@ -1189,9 +1189,9 @@ class MainWindow(QMainWindow):
             hit_idx = self._trade_hit_existing_point(x, y)
             if hit_idx == len(self.trade_drawing_points) - 2 and len(self.trade_drawing_points) >= 2:
                 resp = self._show_incomplete_trade_route_dialog()
-                if resp == QMessageBox.Yes:
+                if resp == QMessageBox.StandardButton.Yes:
                     self._finalize_trade_route(success=True)
-                elif resp == QMessageBox.No:
+                elif resp == QMessageBox.StandardButton.No:
                     self._abort_trade_drawing()
                 else:
                     self._trade_undo_last_point()
@@ -1328,7 +1328,7 @@ class MainWindow(QMainWindow):
         if not (hasattr(item, "data") and callable(item.data)):
             return
 
-        obj_type = item.data(Qt.UserRole)
+        obj_type = item.data(Qt.ItemDataRole.UserRole)
         if obj_type not in self.context_menu_options:
             return
 
@@ -1351,7 +1351,7 @@ class MainWindow(QMainWindow):
     
         self.is_dragging = True
         self.ui.graphicsView.setInteractive(False)
-        self.ui.graphicsView.setDragMode(QGraphicsView.NoDrag)
+        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._apply_interactivity_to_all(False)
     
         # ensure cursor persists after the context menu closes
@@ -1573,14 +1573,14 @@ class MainWindow(QMainWindow):
             )
             handle.setZValue(140)  # Above everything else
             handle.setFlag(QGraphicsItem.ItemIsSelectable, True)
-            handle.setCursor(Qt.PointingHandCursor)
+            handle.setCursor(Qt.CursorShape.PointingHandCursor)
             
             # Store data for vertex editing
-            handle.setData(Qt.UserRole, "VERTEX_HANDLE")
-            handle.setData(Qt.UserRole + 1, vertex_type)  # "TRADE_ROUTE" or "EMPIRE_BORDER"
-            handle.setData(Qt.UserRole + 2, i)  # Vertex index
+            handle.setData(Qt.ItemDataRole.UserRole, "VERTEX_HANDLE")
+            handle.setData(Qt.ItemDataRole.UserRole + 1, vertex_type)  # "TRADE_ROUTE" or "EMPIRE_BORDER"
+            handle.setData(Qt.ItemDataRole.UserRole + 2, i)  # Vertex index
             if city:
-                handle.setData(Qt.UserRole + 3, city)  # City object for trade routes
+                handle.setData(Qt.ItemDataRole.UserRole + 3, city)  # City object for trade routes
                 
             self.vertex_handle_items.append(handle)
 
@@ -1589,9 +1589,9 @@ class MainWindow(QMainWindow):
         if self.vertex_editing_active:
             return  # Already editing
             
-        vertex_type = handle_item.data(Qt.UserRole + 1)
-        vertex_index = handle_item.data(Qt.UserRole + 2)
-        city = handle_item.data(Qt.UserRole + 3)  # May be None for borders
+        vertex_type = handle_item.data(Qt.ItemDataRole.UserRole + 1)
+        vertex_index = handle_item.data(Qt.ItemDataRole.UserRole + 2)
+        city = handle_item.data(Qt.ItemDataRole.UserRole + 3)  # May be None for borders
         
         self.vertex_editing_active = True
         self.editing_vertex_type = vertex_type
@@ -1694,7 +1694,7 @@ class MainWindow(QMainWindow):
         return group
     
     def _place_pixmap(self, x: float, y: float, pm: QPixmap, z: float, group: QGraphicsItemGroup | None = None,
-                      center: bool = True, data: dict | None = None, cursor=Qt.ArrowCursor,
+                      center: bool = True, data: dict | None = None, cursor=Qt.CursorShape.ArrowCursor,
                       item_cls=QGraphicsPixmapItem):
         """Place a pixmap at image coords (x,y) mapped to scene, return the item."""
         if self.bg_item is None or pm is None or pm.isNull():
@@ -1812,7 +1812,7 @@ class MainWindow(QMainWindow):
         # Remove hit items for this city's trade route - more robust cleanup
         items_to_remove = []
         for item in self.trade_route_hit_items:
-            if hasattr(item, 'data') and callable(item.data) and item.data(Qt.UserRole + 1) == city_index:
+            if hasattr(item, 'data') and callable(item.data) and item.data(Qt.ItemDataRole.UserRole + 1) == city_index:
                 items_to_remove.append(item)
         
         for item in items_to_remove:
@@ -1915,9 +1915,9 @@ class MainWindow(QMainWindow):
                 hit.setPen(QPen(Qt.transparent, 12))  # Wide invisible hit area
                 hit.setZValue(6)  # Above trade dots but below selection
                 hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                hit.setData(Qt.UserRole, "TRADE_ROUTE")  # Mark as trade route
-                hit.setData(Qt.UserRole + 1, city_index)  # Store city index
-                hit.setData(Qt.UserRole + 2, i)  # Store segment index
+                hit.setData(Qt.ItemDataRole.UserRole, "TRADE_ROUTE")  # Mark as trade route
+                hit.setData(Qt.ItemDataRole.UserRole + 1, city_index)  # Store city index
+                hit.setData(Qt.ItemDataRole.UserRole + 2, i)  # Store segment index
                 group.addToGroup(hit)
                 self.trade_route_hit_items.append(hit)
             except Exception as e:
@@ -1963,9 +1963,9 @@ class MainWindow(QMainWindow):
 
         resp = self._show_incomplete_border_dialog()
         
-        if resp == QMessageBox.Yes:
+        if resp == QMessageBox.StandardButton.Yes:
             self._finalize_edge(success=True, close_to_index=0)
-        elif resp == QMessageBox.No:
+        elif resp == QMessageBox.StandardButton.No:
             self._edge_abort(erase=True)
         # Cancel -> continue drawing (do nothing)
         
@@ -2063,8 +2063,8 @@ class MainWindow(QMainWindow):
             if it:
                 it.setFlag(QGraphicsPixmapItem.ItemIsSelectable, False)
                 it.setAcceptHoverEvents(False)
-                it.setCursor(Qt.ArrowCursor)
-                it.setData(Qt.UserRole, EmpObjTypes.EMPIRE_EDGE)
+                it.setCursor(Qt.CursorShape.ArrowCursor)
+                it.setData(Qt.ItemDataRole.UserRole, EmpObjTypes.EMPIRE_EDGE)
                 self.border_icon_items.append(it)
     
         def place_blue_vertex(i: int):
@@ -2082,8 +2082,8 @@ class MainWindow(QMainWindow):
             hit.setPen(QPen(Qt.transparent, 12))
             hit.setZValue(76)
             hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
-            hit.setData(Qt.UserRole, EmpObjTypes.EMPIRE_EDGE)
-            hit.setData(Qt.UserRole + 1, i)  # edge index
+            hit.setData(Qt.ItemDataRole.UserRole, EmpObjTypes.EMPIRE_EDGE)
+            hit.setData(Qt.ItemDataRole.UserRole + 1, i)  # edge index
             self.border_visual_group.addToGroup(hit)
             self.border_edge_hit_items.append(hit)
     
@@ -2106,10 +2106,10 @@ class MainWindow(QMainWindow):
                 self,
                 "Delete Border",
                 "Are you sure you want to delete the empire border?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if resp != QMessageBox.Yes:
+            if resp != QMessageBox.StandardButton.Yes:
                 return
         
         # Clear from model
@@ -2127,7 +2127,7 @@ class MainWindow(QMainWindow):
         if not (empire and empire.border):
             return
         
-        edge_index = item.data(Qt.UserRole + 1)  # stored during render
+        edge_index = item.data(Qt.ItemDataRole.UserRole + 1)  # stored during render
         if edge_index is None:
             return
             
@@ -2145,10 +2145,10 @@ class MainWindow(QMainWindow):
                 self,
                 "Start New Border?",
                 "An empire border already exists. Start a new one and discard the current border?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if resp != QMessageBox.Yes:
+            if resp != QMessageBox.StandardButton.Yes:
                 return
             # erase model + visuals
             self.delete_empire_border(force = True)
@@ -2185,9 +2185,9 @@ class MainWindow(QMainWindow):
                 result = QMessageBox.warning(
                     self, "Trade Route already exists",
                     "There is already a trade route plotted for this city. Would you like to remove it?",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
                 )
-                if result == QMessageBox.No:
+                if result == QMessageBox.StandardButton.No:
                     QTimer.singleShot(100, lambda: self._edit_city(city_obj))
                     return
                 else:
@@ -2222,7 +2222,7 @@ class MainWindow(QMainWindow):
             if has_ours and ours is not city_obj:
                 QMessageBox.warning(
                     self, "Duplicate 'Our City'",
-                    "There is already an 'Our City'. Remove it first.", QMessageBox.Ok
+                    "There is already an 'Our City'. Remove it first.", QMessageBox.StandardButton.Ok
                 )
                 # revert and reopen
                 city_obj.__dict__.clear()
@@ -2245,7 +2245,7 @@ class MainWindow(QMainWindow):
                 it.setPixmap(self._pixmap_for_city(city_obj))
                 kind = CITYTYPE_TO_KIND.get(city_obj.city_type)
                 if kind is not None:
-                    it.setData(Qt.UserRole, kind)
+                    it.setData(Qt.ItemDataRole.UserRole, kind)
                 else:
                     print("save error: kind is none")
    
@@ -2346,7 +2346,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(el["name"])
             item.setIcon(QIcon(self.pil_to_qpixmap(el["pil"])))
             item.setSizeHint(QSize(100, 80))
-            item.setData(Qt.UserRole, el["kind"])   # store the enum directly (EmpCityTypes or EmpObjTypes)
+            item.setData(Qt.ItemDataRole.UserRole, el["kind"])   # store the enum directly (EmpCityTypes or EmpObjTypes)
             self.ui.listWidget.addItem(item)
         self.ui.listWidget.setIconSize(QSize(64, 64))
 
@@ -2358,7 +2358,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, "Missing Map",
                     "The 'Default Empire Map' is not available in the loaded images.",
-                    QMessageBox.Ok
+                    QMessageBox.StandardButton.Ok
                     )
     def _no_bg_item_alive(self):
         # alive iff we have an object AND it still belongs to a scene
@@ -2451,7 +2451,7 @@ class MainWindow(QMainWindow):
             item.setData(1, city)
             kind = CITYTYPE_TO_KIND.get(city.city_type)
             if kind is not None:
-                item.setData(Qt.UserRole, kind)
+                item.setData(Qt.ItemDataRole.UserRole, kind)
             self.scene.addItem(item)
             self.city_items[key] = item
     
@@ -2460,7 +2460,7 @@ class MainWindow(QMainWindow):
 
     def _apply_item_interactivity(self, item, enable: bool):
         item.setAcceptHoverEvents(enable)
-        item.setCursor(Qt.PointingHandCursor if enable else Qt.ArrowCursor)
+        item.setCursor(Qt.CursorShape.PointingHandCursor if enable else Qt.CursorShape.ArrowCursor)
     
     def _apply_interactivity_to_all(self, enable: bool):
         for it in self.city_items.values():
@@ -2538,6 +2538,75 @@ class MainWindow(QMainWindow):
         if self.empire_border and self.state.current_empire_object.border:
             self.render_empire_border()
     
+    def on_new_empire(self):
+        """Handle the New Empire action by showing the image selection dialog."""
+        dialog = ImageSelectionDialog(self)
+        
+        if dialog.exec() == QDialog.accepted:
+            selected_image = dialog.get_selected_image()
+            if selected_image:
+                # Clear current empire data and set new background
+                self.clear_empire_data()
+                self.set_background_image_from_path(selected_image)
+                
+                # Update window title to indicate new file
+                self.setWindowTitle("Empire Editor - New Empire")
+                
+    def clear_empire_data(self):
+        """Clear all current empire data for a new empire."""
+        # Clear the empire data
+        if hasattr(self, 'state'):
+            self.state.empire_objects.clear()
+            self.state.empire_cities.clear()
+            
+        # Clear the graphics scene
+        if hasattr(self, 'scene') and self.scene:
+            # Remove all items except the background
+            for item in self.scene.items():
+                if not isinstance(item, QGraphicsPixmapItem) or item != getattr(self, 'background_item', None):
+                    self.scene.removeItem(item)
+                    
+        # Clear the list widget
+        self.ui.listWidget.clear()
+        self.add_city_icons_to_list()  # Re-add the template icons
+        
+    def set_background_image_from_path(self, image_path):
+        """Set background image from a file path."""
+        if not os.path.exists(image_path):
+            QMessageBox.warning(self, "Image Not Found", 
+                               f"Could not find image file:\n{image_path}")
+            return
+            
+        try:
+            pixmap = QPixmap(image_path)
+            if pixmap.isNull():
+                QMessageBox.warning(self, "Invalid Image", 
+                                   f"Could not load image file:\n{image_path}")
+                return
+                
+            # Set up the scene and background
+            if not hasattr(self, 'scene') or not self.scene:
+                self.scene = QGraphicsScene()
+                self.ui.graphicsView.setScene(self.scene)
+            
+            # Remove existing background if any
+            if hasattr(self, 'background_item') and self.background_item:
+                self.scene.removeItem(self.background_item)
+                
+            # Add new background
+            self.background_item = QGraphicsPixmapItem(pixmap)
+            self.scene.addItem(self.background_item)
+            
+            # Set scene rect to image dimensions
+            self.scene.setSceneRect(pixmap.rect())
+            
+            # Fit the view to the new image
+            self.ui.graphicsView.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Image", 
+                               f"An error occurred while loading the image:\n{str(e)}")
+    
     def on_default_empire_map_selected(self):
         if "The_empire" in self.state.images:
             empire_image = self.state.images["The_empire"]
@@ -2548,14 +2617,14 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Missing Map",
                                 "The 'Default Empire Map' is not available in the loaded images.",
-                                QMessageBox.Ok)
+                                QMessageBox.StandardButton.Ok)
 
     def pil_to_qpixmap(self, pil_img):
         if pil_img.mode != "RGBA":
             pil_img = pil_img.convert("RGBA")
         w, h = pil_img.size
         data = pil_img.tobytes("raw", "RGBA")
-        qimg = QImage(data, w, h, QImage.Format_RGBA8888)
+        qimg = QImage(data, w, h, QImage.Format.Format_RGBA8888)
         return QPixmap.fromImage(qimg)
 
     def _ensure_new_empire_for_new_background(self) -> bool:
@@ -2568,10 +2637,10 @@ class MainWindow(QMainWindow):
             resp = QMessageBox.question(
                 self,
                 "Create New Empire?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if resp != QMessageBox.Yes:
+            if resp != QMessageBox.StandardButton.Yes:
                 return False
     
         
@@ -2604,7 +2673,7 @@ class MainWindow(QMainWindow):
             has_ours, ours = self.state.has_our_city()
             if has_ours:
                 resp = self._show_move_city_dialog(ours, x, y)
-                if resp == QMessageBox.No:
+                if resp == QMessageBox.StandardButton.No:
                     return
                 self._remove_city_marker(ours)
                 # Store center coordinates in city data
