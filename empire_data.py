@@ -76,7 +76,7 @@ class ResourceType(str, Enum):
 @dataclass
 class Ornament:
     """<ornament type="...">"""
-    type: OrnamentType
+    ornament_type: OrnamentType
 
 
 @dataclass
@@ -97,7 +97,7 @@ class Border:
 @dataclass
 class Resource:
     """<resource type="" amount=""> (amount optional, defaults to 1; ours can omit)"""
-    type: ResourceType
+    resource_type: ResourceType
     amount: Optional[int] = 1  # per docs; for 'ours' can be omitted
 
     def __post_init__(self):
@@ -130,7 +130,7 @@ class City:
     sells: List[Resource] = field(default_factory=list)
 
     def __post_init__(self):
-        if self.type == CityType.OURS and not self.sells:
+        if self.city_type == CityType.OURS and not self.sells:
             pass
 
 
@@ -172,7 +172,7 @@ class DistantBattlePath:
         ...
     </path>
     """
-    type: DistantPathType
+    path_type: DistantPathType
     start_x: int
     start_y: int
     waypoints: List[Waypoint] = field(default_factory=list)
@@ -198,7 +198,7 @@ class Empire:
 
         for o in self.ornaments:
             o_el = SubElement(root, "ornament")
-            o_el.set("type", o.type)
+            o_el.set("type", o.ornament_type)
 
         if self.border is not None:
             b_el = SubElement(root, "border")
@@ -217,15 +217,15 @@ class Empire:
             c_el.set("name", c.name)
             c_el.set("x", str(c.x))
             c_el.set("y", str(c.y))
-            if c.type and c.type != CityType.TRADE:
-                c_el.set("type", c.type)
+            if c.city_type and c.city_type != CityType.TRADE:
+                c_el.set("type", c.city_type)
 
             if c.trade_route is not None:
                 tr = c.trade_route
                 if tr.cost is not None:
                     c_el.set("trade_route_cost", str(tr.cost))
-                if tr.type is not None:
-                    c_el.set("trade_route_type", tr.type)
+                if tr.r_type is not None:
+                    c_el.set("trade_route_type", tr.r_type)
                 if tr.trade_points:
                     tp_el = SubElement(c_el, "trade_points")
                     for p in tr.trade_points:
@@ -237,20 +237,20 @@ class Empire:
                 buys_el = SubElement(c_el, "buys")
                 for r in c.buys:
                     r_el = SubElement(buys_el, "resource")
-                    r_el.set("type", r.type)
+                    r_el.set("type", r.resource_type)
                     if r.amount not in (None, 1):
                         r_el.set("amount", str(r.amount))
 
             if c.sells:
                 sells_el = SubElement(c_el, "sells")
-                omit_amount = (c.type == CityType.OURS)
+                omit_amount = (c.city_type == CityType.OURS)
                 for r in c.sells:
                     r_el = SubElement(sells_el, "resource")
-                    r_el.set("type", r.type)
+                    r_el.set("type", r.resource_type)
                     if not omit_amount and r.amount not in (None, 1):
                         r_el.set("amount", str(r.amount))
 
-            if c.type == CityType.OURS and not c.sells:
+            if c.city_type == CityType.OURS and not c.sells:
                 raise ValueError("City '%s' is type='ours' but has no <sells> resources." % c.name)
 
         if self.invasion_paths:
@@ -266,7 +266,7 @@ class Empire:
             dist_el = SubElement(root, "distant_battle_paths")
             for p in self.distant_battle_paths:
                 p_el = SubElement(dist_el, "path")
-                p_el.set("type", p.type)
+                p_el.set("type", p.path_type)
                 p_el.set("start_x", str(p.start_x))
                 p_el.set("start_y", str(p.start_y))
                 for w in p.waypoints:
@@ -325,7 +325,7 @@ class Empire:
         for o_el in root.findall("ornament"):
             otype = o_el.get("type")
             if otype:
-                ornaments.append(Ornament(otype))
+                ornaments.append(Ornament(ornament_type=otype))
 
         # border
         border = None
@@ -366,7 +366,7 @@ class Empire:
                 if tr_cost is not None or tr_type is not None or trade_points:
                     trade_route = TradeRoute(
                         cost=int(tr_cost) if tr_cost is not None else None,
-                        type=tr_type,
+                        r_type=tr_type,
                         trade_points=trade_points,
                     )
 
@@ -378,14 +378,14 @@ class Empire:
                     for r in buys_el.findall("resource"):
                         rtype = r.get("type")
                         amount = r.get("amount")
-                        buys.append(Resource(rtype, int(amount) if amount is not None else None))
+                        buys.append(Resource(resource_type=rtype, amount=int(amount) if amount is not None else None))
                 sells_el = cls._child(c_el, "sells")
                 if sells_el is not None:
                     for r in sells_el.findall("resource"):
                         rtype = r.get("type")
                         amount = r.get("amount")
                         # omit amount for home city accepted; None is fine
-                        sells.append(Resource(rtype, int(amount) if amount is not None else None))
+                        sells.append(Resource(resource_type=rtype, amount=int(amount) if amount is not None else None))
 
                 city = City(name=name,  x=x,  y=y,  city_type = ctype,
                             buys=buys, sells=sells, trade_route=trade_route)
@@ -412,7 +412,7 @@ class Empire:
                 waypoints = []
                 for w in p_el.findall("waypoint"):
                     waypoints.append(Waypoint(int(w.get("num_months")), int(w.get("x")), int(w.get("y"))))
-                distant_battle_paths.append(DistantBattlePath(ptype, start_x, start_y, waypoints))
+                distant_battle_paths.append(DistantBattlePath(path_type=ptype, start_x=start_x, start_y=start_y, waypoints=waypoints))
 
         return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths)
 

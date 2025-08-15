@@ -34,10 +34,10 @@ class EmpObjTypes(Enum):
     
 CITYTYPE_TO_KIND = {
     ed.CityType.OURS: EmpCityTypes.OUR,
-    getattr(ed.CityType, "TRADE", None): EmpCityTypes.TRADE,
-    getattr(ed.CityType, "ROMAN", None): EmpCityTypes.TRADE,
-    getattr(ed.CityType, "VULNERABLE", None): EmpCityTypes.TRADE,
-    getattr(ed.CityType, "DISTANT", None): EmpCityTypes.DISTANT,
+    ed.CityType.TRADE: EmpCityTypes.TRADE,
+    ed.CityType.ROMAN: EmpCityTypes.TRADE,
+    ed.CityType.VULNERABLE: EmpCityTypes.TRADE,
+    ed.CityType.DISTANT: EmpCityTypes.DISTANT,
 }
 # ---------------------------------------------
 
@@ -135,8 +135,8 @@ class ProgramState:
         e = self.current_empire_object
         if not e:
             return False, None
-        for c in getattr(e, "cities", []):
-            if getattr(c, "type", None) == ed.CityType.OURS:
+        for c in e.cities:
+            if c.city_type == ed.CityType.OURS:
                 return True, c
         return False, None
 
@@ -145,16 +145,16 @@ class ProgramState:
         e = self.current_empire_object
         if not e:
             return False
-        if getattr(e, "cities", []):
+        if e.cities:
             return True
-        if getattr(e, "ornaments", []):
+        if e.ornaments:
             return True
-        if getattr(e, "invasion_paths", []):
+        if e.invasion_paths:
             return True
-        if getattr(e, "distant_battle_paths", []):
+        if e.distant_battle_paths:
             return True
-        b = getattr(e, "border", None)
-        if b and getattr(b, "edges", []):
+        b = e.border
+        if b and b.edges:
             return True
         return False
 
@@ -382,10 +382,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.Ok
             )
         except Exception as e:
-            QMessageBox.critical(
-                self, "Load Error", f"Failed to load empire:\n{str(e)}",
-                QMessageBox.Ok
-            )
+            raise e
+            # QMessageBox.critical(
+            #     self, "Load Error", f"Failed to load empire:\n{str(e)}",
+            #     QMessageBox.Ok
+            # )
 
     def save_empire_xml(self):
         """Save current empire to XML file."""
@@ -796,7 +797,7 @@ class MainWindow(QMainWindow):
         # City markers
         if hasattr(item, "data") and callable(item.data):
             city_obj = item.data(1)
-            if city_obj and getattr(city_obj, "__class__", None).__name__ == "City":
+            if city_obj and city_obj.__class__.__name__ == "City":
                 self.select_city_marker(item, city_obj)
                 return
     
@@ -929,7 +930,7 @@ class MainWindow(QMainWindow):
             
         if overlay_type == "border":
             self.clear_border_selection_overlay()
-            selected_edge_idx = getattr(self, "selected_edge_index", None)
+            selected_edge_idx = self.selected_edge_index
             
             # Draw dotted outline
             for i in range(len(points)):
@@ -970,7 +971,7 @@ class MainWindow(QMainWindow):
                 p0 = self.bg_item.mapToScene(x0, y0)
                 p1 = self.bg_item.mapToScene(x1, y1)
                 
-                pen = QPen(QColor(255, 140, 0) if city.trade_route.type == ed.TradeRouteType.LAND else Qt.cyan, 2)
+                pen = QPen(QColor(255, 140, 0) if city.trade_route.r_type == ed.TradeRouteType.LAND else Qt.cyan, 2)
                 pen.setStyle(Qt.DotLine)
                 seg = self.scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
                 seg.setZValue(120)
@@ -992,9 +993,9 @@ class MainWindow(QMainWindow):
     def select_empire_border_overlay(self):
         """Mark the existing border overlay as selected."""
         e = self.state.current_empire_object
-        if not (self.empire_border and e and getattr(e, "border", None) and self.bg_item):
+        if not (self.empire_border and e and e.border and self.bg_item):
             return
-        pts = [(edge.x, edge.y) for edge in getattr(e.border, "edges", [])]
+        pts = [(edge.x, edge.y) for edge in e.border.edges]
         if len(pts) >= 2:
             self._create_selection_overlay("border", pts)
 
@@ -1230,7 +1231,7 @@ class MainWindow(QMainWindow):
             
             # Check if clicked on "Our City" to finish
             for city in self.state.current_empire_object.cities:
-                if city.type == ed.CityType.OURS:
+                if city.city_type == ed.CityType.OURS:
                     city_pixmap = self._pixmap_for_city(city)
                     city_half_width = city_pixmap.width() // 2
                     city_half_height = city_pixmap.height() // 2
@@ -1262,7 +1263,7 @@ class MainWindow(QMainWindow):
 
         self._abort_trade_drawing()
         self.trade_drawing_active = True
-        self.trade_is_land = bool(city.trade_route and city.trade_route.type == ed.TradeRouteType.LAND)
+        self.trade_is_land = bool(city.trade_route and city.trade_route.r_type == ed.TradeRouteType.LAND)
         self.trade_route_city = city
         self.trade_drawing_points = []
         self.trade_drawing_point_items = []
@@ -1316,7 +1317,7 @@ class MainWindow(QMainWindow):
             if city.trade_route is None:
                 city.trade_route = ed.TradeRoute(type=ttype, trade_points=pts)
             else:
-                city.trade_route.type = ttype
+                city.trade_route.r_type = ttype
                 city.trade_route.trade_points = pts
             
             self._abort_trade_drawing()
@@ -1336,15 +1337,15 @@ class MainWindow(QMainWindow):
     def select_empire_border_overlay(self):
         """Mark the existing border overlay as selected, highlight selected edge thicker."""
         e = self.state.current_empire_object
-        if not (self.empire_border and e and getattr(e, "border", None) and self.bg_item):
+        if not (self.empire_border and e and e.border and self.bg_item):
             return
-        pts = [(edge.x, edge.y) for edge in getattr(e.border, "edges", [])]
+        pts = [(edge.x, edge.y) for edge in e.border.edges]
         if len(pts) < 2:
             return
     
         self.clear_border_selection_overlay()
     
-        selected_edge_idx = getattr(self, "selected_edge_index", None)
+        selected_edge_idx = self.selected_edge_index
     
         # Draw dotted outline, making the selected edge thicker
         for i in range(len(pts)):
@@ -1843,7 +1844,7 @@ class MainWindow(QMainWindow):
         
     def _get_empire_edge_pixmap(self) -> QPixmap:
         """Get the empire edge pixmap for border rendering."""
-        for el in getattr(self.state, "elements", []):
+        for el in self.state.elements:
             if el["kind"] == EmpObjTypes.EMPIRE_EDGE:
                 return self.pil_to_qpixmap(el["pil"])
         return QPixmap()
@@ -1912,7 +1913,7 @@ class MainWindow(QMainWindow):
             p0 = self.bg_item.mapToScene(x0, y0)
             p1 = self.bg_item.mapToScene(x1, y1)
             
-            pen = QPen(QColor(255, 140, 0) if city.trade_route.type == ed.TradeRouteType.LAND else Qt.cyan, 2)
+            pen = QPen(QColor(255, 140, 0) if city.trade_route.r_type == ed.TradeRouteType.LAND else Qt.cyan, 2)
             pen.setStyle(Qt.DotLine)
             
             seg = self.scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
@@ -1956,7 +1957,7 @@ class MainWindow(QMainWindow):
         
         # Render the route
         pts = [(p.x, p.y) for p in city.trade_route.trade_points]
-        is_land = (city.trade_route.type == ed.TradeRouteType.LAND)
+        is_land = (city.trade_route.r_type == ed.TradeRouteType.LAND)
         dot_pm = self._get_trade_dot_pixmap(is_land)
         
         if not dot_pm.isNull():
@@ -1965,18 +1966,24 @@ class MainWindow(QMainWindow):
             self._stamp_along_polyline(pts, spacing=7.0, place_cb=place_trade_dot, include_ends=True)
         
         # Add invisible hit areas for each segment (similar to border)
+    
         for i in range(len(pts) - 1):
-            p0 = self._img_to_scene(pts[i][0], pts[i][1])
-            p1 = self._img_to_scene(pts[i+1][0], pts[i+1][1])
-            hit = QGraphicsLineItem(p0.x(), p0.y(), p1.x(), p1.y())
-            hit.setPen(QPen(Qt.transparent, 12))  # Wide invisible hit area
-            hit.setZValue(6)  # Above trade dots but below selection
-            hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
-            hit.setData(Qt.UserRole, "TRADE_ROUTE")  # Mark as trade route
-            hit.setData(Qt.UserRole + 1, city_index)  # Store city index
-            hit.setData(Qt.UserRole + 2, i)  # Store segment index
-            group.addToGroup(hit)
-            self.trade_route_hit_items.append(hit)
+            try:
+                p0 = self._img_to_scene(pts[i][0], pts[i][1])
+                p1 = self._img_to_scene(pts[i+1][0], pts[i+1][1])
+                hit = QGraphicsLineItem(p0.x(), p0.y(), p1.x(), p1.y())
+                hit.setPen(QPen(Qt.transparent, 12))  # Wide invisible hit area
+                hit.setZValue(6)  # Above trade dots but below selection
+                hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                hit.setData(Qt.UserRole, "TRADE_ROUTE")  # Mark as trade route
+                hit.setData(Qt.UserRole + 1, city_index)  # Store city index
+                hit.setData(Qt.UserRole + 2, i)  # Store segment index
+                group.addToGroup(hit)
+                self.trade_route_hit_items.append(hit)
+            except Exception as e:
+                # Fallback if QGraphicsLineItem fails for some reason
+                print(f"Error creating trade route hit items: {e}")
+                continue
     # ==== edge/border drawing (temp) ===========================================
     
     def _begin_edge_drawing(self, x_img: int, y_img: int):
@@ -2086,15 +2093,15 @@ class MainWindow(QMainWindow):
         if not self.empire_border:
             return
         e = self.state.current_empire_object
-        if e is None or getattr(e, "border", None) is None or self.bg_item is None:
+        if e is None or e.border is None or self.bg_item is None:
             return
     
-        pts = [(edge.x, edge.y) for edge in getattr(e.border, "edges", [])]
+        pts = [(edge.x, edge.y) for edge in e.border.edges]
         if len(pts) < 2:
             return
     
-        hidden = [bool(getattr(edg, "hidden", False)) for edg in e.border.edges]
-        density = getattr(e.border, "density", 28) or 28
+        hidden = [bool(edg.hidden) for edg in e.border.edges]
+        density = e.border.density or 28
         icon_pm = self._get_empire_edge_pixmap()
         if icon_pm.isNull():
             return
@@ -2177,7 +2184,7 @@ class MainWindow(QMainWindow):
     def toggle_edge_hidden_from_item(self, item):
         """Toggle the hidden state of an edge segment."""
         empire = self.state.current_empire_object
-        if not (empire and getattr(empire, "border", None)):
+        if not (empire and empire.border):
             return
         
         edge_index = item.data(Qt.UserRole + 1)  # stored during render
@@ -2187,13 +2194,13 @@ class MainWindow(QMainWindow):
 
         edges = empire.border.edges
         if 0 <= edge_index < len(edges):
-            edges[edge_index].hidden = not bool(getattr(edges[edge_index], "hidden", False))
+            edges[edge_index].hidden = not bool(edges[edge_index].hidden)
             self.render_empire_border()
         
         
     def handle_drop_empire_edge(self, scene_pos):
         # If we already have a border, ask first
-        if self.empire_border and getattr(self.state.current_empire_object, "border", None):
+        if self.empire_border and self.state.current_empire_object.border:
             resp = QMessageBox.question(
                 self,
                 "Start New Border?",
@@ -2258,8 +2265,8 @@ class MainWindow(QMainWindow):
         new_type = city_obj.city_type
         
         # If city type changed from trade to non-trade, remove trade route
-        if (old_type in (getattr(ed.CityType, "TRADE", None), getattr(ed.CityType, "ROMAN", None), getattr(ed.CityType, "VULNERABLE", None)) and
-            new_type not in (getattr(ed.CityType, "TRADE", None), getattr(ed.CityType, "ROMAN", None), getattr(ed.CityType, "VULNERABLE", None), ed.CityType.OURS)):
+        if (old_type in (ed.CityType.TRADE, ed.CityType.ROMAN, ed.CityType.VULNERABLE) and
+            new_type not in (ed.CityType.TRADE, ed.CityType.ROMAN, ed.CityType.VULNERABLE, ed.CityType.OURS)):
             # Clear trade route for non-trade cities
             city_index = self._get_city_index(city_obj)
             if city_index is not None:
@@ -2268,7 +2275,7 @@ class MainWindow(QMainWindow):
                 city_obj.trade_route.trade_points = []
         
         # validations
-        if city_obj.type == ed.CityType.OURS: #TODO: replace this by normal property check, not getattr
+        if city_obj.city_type == ed.CityType.OURS: #TODO: replace this by normal property check, not getattr
             has_ours, ours = self.state.has_our_city()
             if has_ours and ours is not city_obj:
                 QMessageBox.warning(
@@ -2281,8 +2288,8 @@ class MainWindow(QMainWindow):
                 return  # Exit early after revert
 
         # Check if trade route type changed and re-render if needed
-        old_route_type = getattr(snapshot.trade_route, "type", None) if snapshot.trade_route else None
-        new_route_type = getattr(city_obj.trade_route, "type", None) if city_obj.trade_route else None
+        old_route_type = snapshot.trade_route.r_type if snapshot.trade_route else None
+        new_route_type = city_obj.trade_route.r_type if city_obj.trade_route else None
         
         if old_route_type != new_route_type and city_obj.trade_route and city_obj.trade_route.trade_points:
             # Re-render trade route with new type colors
@@ -2294,7 +2301,7 @@ class MainWindow(QMainWindow):
             if key in self.city_items:
                 it = self.city_items[key]
                 it.setPixmap(self._pixmap_for_city(city_obj))
-                kind = CITYTYPE_TO_KIND.get(getattr(city_obj, "type", None))
+                kind = CITYTYPE_TO_KIND.get(city_obj.city_type)
                 if kind is not None:
                     it.setData(Qt.UserRole, kind)
                 else:
@@ -2307,7 +2314,7 @@ class MainWindow(QMainWindow):
         City kinds -> handle_city_drop
         Object kinds -> dedicated handler (e.g., handle_drop_empire_edge)
         """
-        kind = getattr(self, "selected_kind", None)
+        kind = self.selected_kind
         if kind is None:
             return
 
@@ -2329,7 +2336,7 @@ class MainWindow(QMainWindow):
     # ---------- DROP HANDLER ----------
     def handle_icon_drop(self, scene_pos):
         # moving existing city?
-        if getattr(self, "moving_city", None) is not None:
+        if self.moving_city is not None:
             xy = self._scene_to_image_xy(scene_pos)
             city = self.moving_city
             self.moving_city = None
@@ -2342,7 +2349,7 @@ class MainWindow(QMainWindow):
                 
                 # If this is "Our City", find all trade routes that end at it BEFORE moving
                 affected_cities = []
-                if city.type == ed.CityType.OURS:
+                if city.city_type == ed.CityType.OURS:
                     empire = self.state.current_empire_object
                     if empire and hasattr(empire, 'cities'):
                         for other_city in empire.cities:
@@ -2427,18 +2434,18 @@ class MainWindow(QMainWindow):
             return ed.CityType.OURS, "Our City"
         elif kind == EmpCityTypes.TRADE:
             # handle possible naming differences in your model
-            trade_type = getattr(ed.CityType, "TRADE", None) or getattr(ed.CityType, "ROMAN", None)
+            trade_type = ed.CityType.TRADE
             return trade_type, "Roman City"
         elif kind == EmpCityTypes.DISTANT:
-            return getattr(ed.CityType, "DISTANT", None), "Far away city"
+            return ed.CityType.DISTANT, "Far away city"
         else:
             return None, "City"
     
     def _pixmap_for_city(self, city) -> QPixmap:
         # 0) If we have a pending drop pixmap, use it EXACTLY
-        pm = getattr(self, "pending_drop_pixmap", None)
-        if isinstance(pm, QPixmap) and not pm.isNull():
-            return pm
+        #pm = self.pending_drop_pixmap
+        #if isinstance(pm, QPixmap) and not pm.isNull():
+            #return pm
     
         # 1) Otherwise, try the currently selected item (if any) — use native pixmap size
         if self.selected_item is not None:
@@ -2452,19 +2459,19 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
     
-        # 2) Fallback by city.type -> EmpCityTypes kind (no scaling)
+        # 2) Fallback by city.city_type -> EmpCityTypes kind (no scaling)
         kind = None
-        ct = getattr(city, "type", None)
+        ct = city.city_type
         try:
             if ct == ed.CityType.OURS:
                 kind = EmpCityTypes.OUR
             elif ct in (
-                getattr(ed.CityType, "TRADE", None),
-                getattr(ed.CityType, "ROMAN", None),
-                getattr(ed.CityType, "VULNERABLE", None),
+                ed.CityType.TRADE,
+                ed.CityType.ROMAN,
+                ed.CityType.VULNERABLE,
             ):
                 kind = EmpCityTypes.TRADE
-            elif ct == getattr(ed.CityType, "DISTANT", None):
+            elif ct == ed.CityType.DISTANT:
                 kind = EmpCityTypes.DISTANT
         except Exception:
             kind = None
@@ -2472,7 +2479,7 @@ class MainWindow(QMainWindow):
         if kind is None and self.state.elements:
             kind = EmpCityTypes.OUR
     
-        for el in getattr(self.state, "elements", []):
+        for el in self.state.elements:
             if el["kind"] == kind:
                 # keep original image size from your PIL source
                 return self.pil_to_qpixmap(el["pil"])
@@ -2503,7 +2510,7 @@ class MainWindow(QMainWindow):
             item.setFlag(QGraphicsPixmapItem.ItemIsMovable, False)
             item.setData(0, key)
             item.setData(1, city)
-            kind = CITYTYPE_TO_KIND.get(getattr(city, "type", None))
+            kind = CITYTYPE_TO_KIND.get(city.city_type)
             if kind is not None:
                 item.setData(Qt.UserRole, kind)
             self.scene.addItem(item)
@@ -2579,7 +2586,7 @@ class MainWindow(QMainWindow):
         self.scene.setSceneRect(pixmap.rect())
         self.ui.graphicsView.setEnabled(True)
         self.remove_no_background_message()
-        if self.empire_border and getattr(self.state.current_empire_object, "border", None):
+        if self.empire_border and self.state.current_empire_object.border:
             self.render_empire_border()
     
     def on_default_empire_map_selected(self):
@@ -2627,7 +2634,7 @@ class MainWindow(QMainWindow):
         self.scene.setSceneRect(pixmap.rect())
         self.ui.graphicsView.setEnabled(True)
         self.remove_no_background_message()
-        if self.empire_border and getattr(self.state.current_empire_object, "border", None):
+        if self.empire_border and self.state.current_empire_object.border:
             self.render_empire_border()
 
     def _ensure_new_empire_for_new_background(self) -> bool:
@@ -2665,7 +2672,7 @@ class MainWindow(QMainWindow):
             return
         x, y = xy
 
-        kind = getattr(self, "selected_kind", None)  # EmpCityTypes.*
+        kind = self.selected_kind  # EmpCityTypes.*
         if kind is None or not isinstance(kind, EmpCityTypes):
             return
 

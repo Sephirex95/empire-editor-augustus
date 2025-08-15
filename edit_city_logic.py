@@ -45,20 +45,6 @@ def to_city_type(text: str) -> CityType | None:
 def enum_text(e) -> str:
     return e.value if hasattr(e, "value") else str(e)
 
-# def city_to_widget_values(c: City) -> dict:
-#     """Pure converter: dataclass -> plain values for widgets. No validation, no defaults."""
-#     return {
-#         "name": c.name,
-#         "x": c.x,
-#         "y": c.y,
-#         "city_type": c.type,                          # keep enums
-#         "trade_route_type": c.trade_route_type,
-#         "trade_route_cost": c.trade_route_cost,
-#         "sells": [(r.type, r.amount) for r in c.sells],
-#         "buys":  [(r.type, r.amount) for r in c.buys],
-#         # "trade_points": [(p.x, p.y) for p in c.trade_points],  # placeholder
-#     }
-
 def to_trade_route_type(text: str) -> TradeRouteType | None:
     if not text:
         return None
@@ -68,24 +54,6 @@ def to_trade_route_type(text: str) -> TradeRouteType | None:
         "sea": TradeRouteType.SEA,
     }
     return mapping.get(key)
-
-
-# def widget_values_to_city(c: City, vals: dict) -> City:
-#     """Pure converter: widget values -> mutate the City in-place. No normalization."""
-#     c.name = vals["name"]
-#     c.x = int(vals["x"])
-#     c.y = int(vals["y"])
-#     c.type = vals["city_type"]
-#     c.trade_route_type = vals["trade_route_type"]
-#     c.trade_route_cost = int(vals["trade_route_cost"]) if vals["trade_route_cost"] is not None else None
-
-#     # rows come as [(ResourceType, amount|None), ...]
-#     c.sells = [Resource(t, a) for (t, a) in vals["sells"]]
-#     c.buys  = [Resource(t, a) for (t, a) in vals["buys"]]
-#     # c.trade_points = [TradePoint(x, y) for (x, y) in vals.get("trade_points", [])]  # placeholder
-
-#     return c
-
 
 class ResourceRow(QWidget):
     def __init__(self, resources, ours=False, parent=None):
@@ -147,7 +115,7 @@ class DynamicList:
             self._append_row("NONE")
     
         # consume specified resources in enum order for tidiness
-        pairs = [(enum_text(r.type), r.amount) for r in res_list]
+        pairs = [(enum_text(r.resource_type), r.amount) for r in res_list]
         pairs.sort(key=lambda t: self.resource_order.get(t[0], 9999))
     
         # set rows
@@ -401,7 +369,7 @@ class CityPropertiesDialog(QDialog):
             self._type_combo.clear()
             for ct in CityType:
                 self._type_combo.addItem(enum_text(ct).capitalize(), ct)
-            idx = self._type_combo.findData(c.type)
+            idx = self._type_combo.findData(c.city_type)
             if idx >= 0:
                 self._type_combo.setCurrentIndex(idx)
             self._type_combo.blockSignals(block)
@@ -414,7 +382,7 @@ class CityPropertiesDialog(QDialog):
             for rt in TradeRouteType:
                 self._route_type_combo.addItem(enum_text(rt).capitalize(), rt)
             if c.trade_route:
-                idx = self._route_type_combo.findData(c.trade_route.type)
+                idx = self._route_type_combo.findData(c.trade_route.r_type)
                 if idx >= 0:
                     self._route_type_combo.setCurrentIndex(idx)
                 if self._route_cost_spin:
@@ -422,7 +390,7 @@ class CityPropertiesDialog(QDialog):
             self._route_type_combo.blockSignals(block)
     
         # resources
-        ours = (c.type == CityType.OURS)
+        ours = (c.city_type == CityType.OURS)
         self.sells.load_from_resources(c.sells, ours=ours)
         self.buys.load_from_resources(c.buys, ours=False)
 
@@ -432,7 +400,7 @@ class CityPropertiesDialog(QDialog):
         # basics
         c.name = self._name_edit.text()
         # no X/Y widgets in this dialog; keep existing coords
-        c.type = self._type_combo.currentData() or to_city_type(self._type_combo.currentText())
+        c.city_type = self._type_combo.currentData() or to_city_type(self._type_combo.currentText())
     
         # trade route (optional). Preserve existing points until you add a UI.
         if self.ui.groupBox_2.isVisible():
@@ -444,7 +412,7 @@ class CityPropertiesDialog(QDialog):
             c.trade_route = None
     
         # resources (DynamicList already returns Resource objects)
-        ours = (c.type == CityType.OURS)
+        ours = (c.city_type == CityType.OURS)
         c.sells = self.sells.to_resources(ours)
         c.buys  = self.buys.to_resources(False)
         return c
