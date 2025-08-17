@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<!DOCTYPE empire>
+<empire version="1">
+    <ornament type="all"/>
+    <cities>
+        <city name="Rome" x="992" y="790" type="roman"/>
+		<city name="Tarentum" x="1164" y="850" type="roman"/>
+		<city name="Brundisium" x="1198" y="837" type="roman"/>
+		<city name="Syracusae" x="1082" y="1049" type="roman"/>
+		<city name="Carthago Nova" x="320" y="989" type="roman"/>
+		<city name="Mediolanium" x="836" y="566" type="roman"/>
+		<city name="Tarraco" x="571" y="750" type="roman"/>
+		<city name="Valentia" x="414" y="873" type="roman"/>
+		<city name="Toletum" x="177" y="822" type="roman"/>
+		<city name="Tingis" x="152" y="1032" type="roman"/>
+		<city name="Sinope" x="1907" y="664" type="roman"/>
+		<city name="Tarsus" x="1992" y="917" type="roman"/>
+		<city name="Leptis Magna" x="1099" y="1317" type="roman"/>
+		<city name="Cyrene" x="1424" y="1257" type="roman"/>
+		<city name="Lutetia" x="567" y="361" type="roman"/>
+		<city name="Massilia" x="708" y="687" type="roman"/>
+		<city name="Narbo" x="593" y="689" type="roman"/>
+		<city name="Lugdunumn" x="720" y="543" type="roman"/>
+		<city name="Caesaerea" x="548" y="1063" type="roman"/>
+		<city name="Alexandria" x="1828" y="1293" type="roman"/>
+		<city name="Augusta Trevorum" x="774" y="244" type="roman"/>
+		<city name="Argentoratum" x="814" y="275" type="roman"/>
+		<city name="Volubilis" x="59" y="1193" type="roman"/>
+		<city name="Lindum" x="524" y="126" type="roman"/>
+		<city name="Byzantium" x="1668" y="756" type="roman"/>
+		<city name="Aquincum" x="1286" y="508" type="roman"/>
+		<city name="Thamugadi" x="793" y="1248" type="roman"/>
+		<city name="Calleva" x="445" y="192" type="roman"/>
+		<city name="Londinium" x="559" y="190" type="roman"/>
+		<city name="Antiocha" x="2079" y="944" type="roman"/>
+		<city name="Palmyra" x="2113" y="969" type="roman"/>
+		<city name="Damascus" x="2151" y="1004" type="roman"/>
+		<city name="Hierosolyma" x="2098" y="1121" type="roman"/>
+		<city name="Pergamum" x="1644" y="835" type="roman"/>
+		<city name="Epheseus" x="1615" y="918" type="roman"/>
+		<city name="Miletus" x="1633" y="962" type="roman"/>
+		<city name="Athenae" x="1445" y="938" type="roman"/>
+		<city name="Corinthus" x="1400" y="959" type="roman"/>
+		<city name="Carthago" x="883" y="1063" type="roman"/>
+		<city name="Capua" x="1036" y="812" type="roman"/>
+		<city name="Arretium" x="960" y="707" type="roman"/>
+		<city name="Pompeii" x="1108" y="879" type="roman"/>
+		<city name="Arminium" x="996" y="680" type="roman"/>
+		<city name="Aquileia" x="998" y="553" type="roman"/>
+		<city name="Caralis" x="834" y="912" type="roman"/>
+		<city name="Gades" x="130" y="947" type="roman"/>
+		<city name="Dyrrhachium" x="1270" y="837" type="roman"/>
+		<city name="Nicopolis" x="1332" y="924" type="roman"/>
+		<city name="Salonae" x="1113" y="660" type="roman"/>
+		<city name="Messene" x="1100" y="993" type="roman"/>
+		<city name="Lilybaeum" x="987" y="1002" type="roman"/>
+		<city name="Sarmizegetusa" x="1429" y="574" type="roman"/>
+		<city name="Thessalonica" x="1450" y="834" type="roman"/>
+		<city name="Chersonesus" x="1832" y="514" type="roman"/>
+		<city name="Artaxata" x="2209" y="725" type="roman"/>
+		<city name="Trapezus" x="2080" y="658" type="roman"/>
+		<city name="Petra" x="2035" y="1282" type="roman"/>
+		<city name="Eboracum" x="519" y="78" type="roman"/>
+		<city name="Lauriacum" x="1023" y="429" type="roman"/>
+		<city name="Ctesiphon" x="2339" y="1091" type="roman"/>
+		<city name="Babylon" x="2362" y="1207" type="roman"/>
+		<city name="Heliopolis" x="1870" y="1313" type="roman"/>
+    </cities>
+    <invasion_paths>
+        <path>
+            <battle x="47" y="678"/>
+            <battle x="79" y="723"/>
+            <battle x="108" y="756"/>
+        </path>
+    </invasion_paths>
+    <distant_battle_paths>
+        <path type="roman" start_x="163" start_y="764">
+            <waypoint num_months="2" x="174" y="734"/>
+            <waypoint num_months="3" x="170" y="683"/>
+        </path>
+        <path type="enemy" start_x="69" start_y="646">
+            <waypoint num_months="6" x="112" y="668"/>
+            <waypoint num_months="2" x="176" y="691"/>
+        </path>
+    </distant_battle_paths>
+</empire>

@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QGraphicsScene, QGraphicsView,
     QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox,
@@ -232,6 +233,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+        
+        # Populate Default Cities menu
+        self.populate_default_cities_menu()
         
         # Set window icon
         import os
@@ -3032,6 +3036,96 @@ class MainWindow(QMainWindow):
         
         print(f"City name labels visibility: {'ON' if visible else 'OFF'}")
 
+    def populate_default_cities_menu(self):
+        """Populate the Default Cities menu with hierarchical regions and cities from JSON."""
+        try:
+            # Load the JSON file
+            json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                   "augustus_assets", "Areldir_maps", "cities_grouped.json")
+            
+            if not os.path.exists(json_path):
+                print(f"Cities JSON file not found: {json_path}")
+                return
+                
+            with open(json_path, 'r', encoding='utf-8') as f:
+                cities_data = json.load(f)
+            
+            # Clear existing menu items
+            self.ui.menuDefaultCities.clear()
+            
+            # Keep track of region actions for parent-child relationships
+            self.region_actions = {}
+            self.city_actions = {}
+            select_all_regions_action = QAction(f"Add all", self)
+            self.ui.menuDefaultCities.addAction(select_all_regions_action)
+  # top
+            # Create region menus with cities
+            for region_name, cities in cities_data.items():
+                # Create region submenu
+                region_menu = self.ui.menuDefaultCities.addMenu(region_name)
+                
+                # Create a "Select All" action for the region
+                select_all_action = QAction(f"Select All {region_name}", self)
+                select_all_action.setCheckable(True)
+                select_all_action.triggered.connect(
+                    lambda checked, region=region_name: self.on_region_select_all(region, checked)
+                )
+                region_menu.addAction(select_all_action)
+                self.region_actions[region_name] = select_all_action
+                
+                # Add separator
+                region_menu.addSeparator()
+                select_all_regions_action.setCheckable(True)
+                self.ui.menuDefaultCities.addAction(select_all_regions_action)
+                #select_all_regions_action.triggered.connect()
+                # Add individual city actions
+                region_city_actions = []
+                for city_name in cities.keys():
+                    city_action = QAction(city_name, self)
+                    city_action.setCheckable(True)
+                    city_action.triggered.connect(
+                        lambda checked, city=city_name, region=region_name: 
+                        self.on_city_selected(region, city, checked)
+                    )
+                    region_menu.addAction(city_action)
+                    region_city_actions.append(city_action)
+                
+                
+                self.city_actions[region_name] = region_city_actions
+                acts = self.ui.menuDefaultCities.actions()
+                if acts:
+                    self.ui.menuDefaultCities.insertAction(acts[0], select_all_regions_action) 
+        except Exception as e:
+            print(f"Error populating Default Cities menu: {e}")
+    
+    def on_region_select_all(self, region_name, checked):
+        """Handle region "Select All" checkbox."""
+        if region_name in self.city_actions:
+            for city_action in self.city_actions[region_name]:
+                city_action.setChecked(checked)
+                # Also trigger the city selection logic
+                city_name = city_action.text()
+                self.on_city_selected(region_name, city_name, checked)
+    
+    def on_city_selected(self, region_name, city_name, checked):
+        """Handle individual city selection."""
+        print(f"City {city_name} in {region_name}: {'selected' if checked else 'deselected'}")
+        
+        # Update region "Select All" state based on individual city states
+        if region_name in self.city_actions and region_name in self.region_actions:
+            region_action = self.region_actions[region_name]
+            city_actions = self.city_actions[region_name]
+            
+            # Check if all cities are selected
+            all_selected = all(action.isChecked() for action in city_actions)
+            any_selected = any(action.isChecked() for action in city_actions)
+            
+            # Update region action state
+            region_action.setChecked(all_selected)
+            
+            # TODO: Implement actual city placement logic here
+            # This is where you would add the city to the map based on the JSON coordinates
+            #self.handle_city_drop(self._scene_to_image_xy((0, 0)))  # Placeholder for actual coordinates
     # -------------------------------------------------------
     # Non-city handler(s)
     # -------------------------------------------------------

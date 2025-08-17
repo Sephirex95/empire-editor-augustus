@@ -100,6 +100,7 @@ class Ui_MainWindow(object):
 
         self.menuFile = QMenu(self.menubar); self.menuFile.setObjectName("menuFile")
         self.menuEmpireProperties = QMenu(self.menubar); self.menuEmpireProperties.setObjectName("menuEmpireProperties")
+        self.menuDefaultCities = QMenu(self.menubar); self.menuDefaultCities.setObjectName("menuDefaultCities")
         self.menuView = QMenu(self.menubar); self.menuView.setObjectName("menuView")
         self.menuSettings = QMenu(self.menubar); self.menuSettings.setObjectName("menuSettings")
         self.menuHelp = QMenu(self.menubar); self.menuHelp.setObjectName("menuHelp")
@@ -141,6 +142,7 @@ class Ui_MainWindow(object):
         # Add top-level menus to menubar
         self.menubar.addAction(self.menuFile.menuAction())
         self.menubar.addAction(self.menuEmpireProperties.menuAction())
+        self.menubar.addAction(self.menuDefaultCities.menuAction())
         self.menubar.addAction(self.menuView.menuAction())
         self.menubar.addAction(self.menuSettings.menuAction())
         self.menubar.addAction(self.menuHelp.menuAction())
@@ -156,6 +158,7 @@ class Ui_MainWindow(object):
         self.menuFile.setTitle(_t("MainWindow", "File", None))
         self.menuEmpireProperties.setTitle(_t("MainWindow", "Empire properties", None))
         self.menuView.setTitle(_t("MainWindow", "View", None))
+        self.menuDefaultCities.setTitle(_t("MainWindow", "Default Cities", None))
         self.menuSettings.setTitle(_t("MainWindow", "Settings", None))
         self.menuHelp.setTitle(_t("MainWindow", "Help", None))
         self.menuGitHub.setTitle(_t("MainWindow", "GitHub", None))
