@@ -43,8 +43,8 @@ class EmpObjTypes(Enum):
 CITYTYPE_TO_KIND = {
     ed.CityType.OURS: EmpCityTypes.OUR,
     ed.CityType.TRADE: EmpCityTypes.TRADE,
-    ed.CityType.ROMAN: EmpCityTypes.TRADE,
-    ed.CityType.VULNERABLE: EmpCityTypes.TRADE,
+    ed.CityType.ROMAN: EmpCityTypes.ROMAN,
+    ed.CityType.VULNERABLE: EmpCityTypes.ROMAN,
     ed.CityType.DISTANT: EmpCityTypes.DISTANT,
 }
 # ---------------------------------------------
@@ -247,6 +247,7 @@ class MainWindow(QMainWindow):
         self.bg_item = None  # the background QGraphicsPixmapItem
         self.bg_type = ed.EmpBackgroundTypes.NONE  # type of background currently set
         self.cities_data = {}  # Store loaded cities data from JSON
+        self._current_image_path = None  # Track current background image file path
         # Edge drawing state
         self.edge_drawing_active = False           # are we in the border drawing mode?
         self.edge_points_img = []                  # [(x_img, y_img), ...]
@@ -361,6 +362,7 @@ class MainWindow(QMainWindow):
             EmpCityTypes.OUR: city_common_menu,
             EmpCityTypes.DISTANT: city_common_menu,
             EmpCityTypes.TRADE: city_common_menu,
+            EmpCityTypes.ROMAN: city_common_menu,  # Add Roman cities to context menu
             
             EmpObjTypes.EMPIRE_EDGE: [
                 ("Toggle Edge Hidden", lambda it: self.toggle_edge_hidden_from_item(it)),
@@ -415,10 +417,25 @@ class MainWindow(QMainWindow):
             return empire.cities.index(city)
         except ValueError:
             return None
-        
+    
+    def _check_before_discarding(self):
+        if self.state.check_if_empire() and self.state.has_any_data():
+            resp = QMessageBox.question(
+                self, "Load Empire",
+                "You have unsaved work in the current empire.\n"
+                "You will lose you progress, continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return False
+        return True
 
     def open_empire_xml(self):
         """Open and load empire from XML file."""
+        # Check if we have unsaved changes
+        if not self._check_before_discarding():
+            return
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Empire XML", "", "XML Files (*.xml);;All Files (*)"
         )
@@ -430,21 +447,17 @@ class MainWindow(QMainWindow):
             with open(file_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
             
-            # Check if we have unsaved changes
-            if self.state.check_if_empire() and self.state.has_any_data():
-                resp = QMessageBox.question(
-                    self, "Load Empire",
-                    "You have unsaved work in the current empire.\n"
-                    "Load new empire and discard current progress?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No
-                )
-                if resp != QMessageBox.StandardButton.Yes:
-                    return
+
             
             # Load empire from XML
             empire = ed.Empire.from_xml_string(xml_content)
             self.state.current_empire_object = empire
+            
+            # Handle map loading and validation
+            xml_dir = os.path.dirname(file_path)
+            success = self._load_and_validate_empire_map(empire, xml_dir)
+            if not success:
+                return  # User cancelled map loading
             
             # Clear existing visuals and render loaded empire
             self._render_loaded_empire()
@@ -490,6 +503,10 @@ class MainWindow(QMainWindow):
         try:
             # Generate XML and save to file
             empire = self.state.current_empire_object
+            
+            # Update map_info based on current background before saving
+            self._update_empire_map_info(empire, file_path)
+            
             empire.write_xml(file_path)
             
             QMessageBox.information(
@@ -502,6 +519,50 @@ class MainWindow(QMainWindow):
                 self, "Save Error", f"Failed to save empire:\n{str(e)}",
                 QMessageBox.StandardButton.Ok
             )
+
+    def _update_empire_map_info(self, empire, file_path):
+        """Update empire map_info based on current background before saving."""
+        if not self.bg_item or self.bg_type == ed.EmpBackgroundTypes.LEGACY:
+            # For legacy backgrounds or no background, keep version 1 format
+            empire.version = 1
+            empire.map_info = None
+            return
+        
+        # For custom backgrounds, set up map_info for version 2+
+        empire.version = 2
+        
+        pixmap = self.bg_item.pixmap()
+        if pixmap.isNull():
+            empire.map_info = None
+            return
+        
+        # Determine relative image path
+        xml_dir = os.path.dirname(file_path)
+        if hasattr(self, '_current_image_path') and self._current_image_path:
+            # Try to make the path relative to the XML file
+            try:
+                image_path = os.path.relpath(self._current_image_path, xml_dir)
+            except ValueError:
+                # If relative path can't be computed (different drives on Windows), use absolute
+                image_path = self._current_image_path
+        else:
+            # No known image path, use placeholder
+            image_path = "background.png"
+        
+        # Create or update map_info
+        if empire.map_info is None:
+            empire.map_info = ed.Map()
+        
+        empire.map_info.image = image_path
+        empire.map_info.width = pixmap.width()
+        empire.map_info.height = pixmap.height()
+        empire.map_info.x_offset = 0
+        empire.map_info.y_offset = 0
+        empire.map_info.coordinates_relative = False
+        empire.map_info.coordinates_x_offset = 0
+        empire.map_info.coordinates_y_offset = 0
+        
+        print(f"Updated empire map_info: {image_path} ({pixmap.width()}x{pixmap.height()})")
 
     def _render_loaded_empire(self):
         """Render the loaded empire data onto the scene."""
@@ -547,6 +608,218 @@ class MainWindow(QMainWindow):
         
         # Update Default Cities menu state based on current background
         self._update_default_cities_menu_state()
+
+    def _load_and_validate_empire_map(self, empire, xml_dir):
+        """Load and validate empire map, handle version compatibility and element bounds checking."""
+        try:
+            # Handle different empire versions
+            if empire.version == 1 or empire.map_info is None:
+                # Version 1 or no map specified - use default/legacy background
+                if empire.version == 1:
+                    QMessageBox.warning(
+                        self, "Legacy Empire", 
+                        "This is a version 1 empire file. Loading default empire background.",
+                        QMessageBox.StandardButton.Ok
+                    )
+                else:
+                    QMessageBox.warning(
+                        self, "No Map Specified", 
+                        "Empire file doesn't specify a map. Loading default empire background.",
+                        QMessageBox.StandardButton.Ok
+                    )
+                
+                # Load default empire map
+                self.on_default_empire_map_selected()
+                self.bg_type = ed.EmpBackgroundTypes.LEGACY
+                self._update_default_cities_menu_state()
+                return True
+            
+            # Version > 1 with map_info specified
+            map_info = empire.map_info
+            image_path = map_info.image
+            
+            if not image_path:
+                QMessageBox.warning(
+                    self, "No Image Specified", 
+                    "Empire map doesn't specify an image file. Loading default empire background.",
+                    QMessageBox.StandardButton.Ok
+                )
+                self.on_default_empire_map_selected()
+                self.bg_type = ed.EmpBackgroundTypes.LEGACY
+                self._update_default_cities_menu_state()
+                return True
+            
+            # Try to find the image file
+            found_image_path = self._find_map_image(image_path, xml_dir)
+            if not found_image_path:
+                # Ask user to locate the file
+                QMessageBox.information(
+                    self, "Map Image Not Found",
+                    f"Could not find map image: {image_path}\n"
+                    f"Please locate the correct image file.",
+                    QMessageBox.StandardButton.Ok
+                )
+                
+                found_image_path, _ = QFileDialog.getOpenFileName(
+                    self, f"Locate Map Image: {os.path.basename(image_path)}", 
+                    xml_dir, "Images (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*)"
+                )
+                
+                if not found_image_path:
+                    QMessageBox.warning(
+                        self, "No Image Selected", 
+                        "No image selected. Loading default empire background.",
+                        QMessageBox.StandardButton.Ok
+                    )
+                    self.on_default_empire_map_selected()
+                    self.bg_type = ed.EmpBackgroundTypes.LEGACY
+                    self._update_default_cities_menu_state()
+                    return True
+            
+            # Load and validate the image
+            try:
+                from PIL import Image
+                pil_image = Image.open(found_image_path)
+                image_width, image_height = pil_image.size
+                
+                # Update map_info with actual image dimensions if they differ
+                if map_info.width != image_width or map_info.height != image_height:
+                    print(f"Updating map dimensions from {map_info.width}x{map_info.height} to {image_width}x{image_height}")
+                    map_info.width = image_width
+                    map_info.height = image_height
+                
+                # Validate empire elements fit within image bounds
+                removed_elements = self._validate_empire_bounds(empire, image_width, image_height)
+                
+                if removed_elements:
+                    QMessageBox.warning(
+                        self, "Elements Outside Map Bounds",
+                        f"Removed {removed_elements} elements that were outside the map boundaries.\n"
+                        f"Map size: {image_width}x{image_height}",
+                        QMessageBox.StandardButton.Ok
+                    )
+                
+                # Set the background image
+                self._current_image_path = found_image_path  # Track the loaded image path
+                self.set_background_image(pil_image)
+                self.bg_type = ed.EmpBackgroundTypes.CUSTOM
+                self._update_default_cities_menu_state()
+                
+                return True
+                
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Image Load Error",
+                    f"Failed to load image {found_image_path}:\n{str(e)}\n"
+                    f"Loading default empire background instead.",
+                    QMessageBox.StandardButton.Ok
+                )
+                self.on_default_empire_map_selected()
+                self.bg_type = ed.EmpBackgroundTypes.LEGACY
+                self._update_default_cities_menu_state()
+                return True
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Map Loading Error",
+                f"Error loading empire map: {str(e)}\n"
+                f"Loading default empire background.",
+                QMessageBox.StandardButton.Ok
+            )
+            self.on_default_empire_map_selected()
+            self.bg_type = ed.EmpBackgroundTypes.LEGACY
+            self._update_default_cities_menu_state()
+            return True
+    
+    def _find_map_image(self, image_path, xml_dir):
+        """Try to find the map image in various locations relative to the XML file."""
+        if os.path.isabs(image_path) and os.path.exists(image_path):
+            return image_path
+        
+        # Try relative to XML directory
+        rel_path = os.path.join(xml_dir, image_path)
+        if os.path.exists(rel_path):
+            return rel_path
+        
+        # Try in images subdirectory
+        images_path = os.path.join(xml_dir, "images", image_path)
+        if os.path.exists(images_path):
+            return images_path
+        
+        # Try just the filename in XML directory
+        filename = os.path.basename(image_path)
+        filename_path = os.path.join(xml_dir, filename)
+        if os.path.exists(filename_path):
+            return filename_path
+        
+        # Try filename in images subdirectory
+        filename_images_path = os.path.join(xml_dir, "images", filename)
+        if os.path.exists(filename_images_path):
+            return filename_images_path
+        
+        return None
+    
+    def _validate_empire_bounds(self, empire, map_width, map_height):
+        """Remove empire elements that are outside map bounds. Returns count of removed elements."""
+        removed_count = 0
+        
+        # Check cities
+        if hasattr(empire, 'cities'):
+            cities_to_remove = []
+            for city in empire.cities:
+                if hasattr(city, 'x') and hasattr(city, 'y'):
+                    if city.x < 0 or city.x >= map_width or city.y < 0 or city.y >= map_height:
+                        cities_to_remove.append(city)
+                        print(f"Removing city '{city.name}' at ({city.x}, {city.y}) - outside map bounds")
+            
+            for city in cities_to_remove:
+                empire.cities.remove(city)
+                removed_count += 1
+        
+        # Check border points
+        if hasattr(empire, 'border') and empire.border and hasattr(empire.border, 'edge_points'):
+            points_to_remove = []
+            for point in empire.border.edge_points:
+                if hasattr(point, 'x') and hasattr(point, 'y'):
+                    if point.x < 0 or point.x >= map_width or point.y < 0 or point.y >= map_height:
+                        points_to_remove.append(point)
+                        print(f"Removing border point at ({point.x}, {point.y}) - outside map bounds")
+            
+            for point in points_to_remove:
+                empire.border.edge_points.remove(point)
+                removed_count += 1
+        
+        # Check battle points in invasion paths
+        if hasattr(empire, 'invasion_paths'):
+            for invasion_path in empire.invasion_paths:
+                if hasattr(invasion_path, 'battles'):
+                    battles_to_remove = []
+                    for battle in invasion_path.battles:
+                        if hasattr(battle, 'x') and hasattr(battle, 'y'):
+                            if battle.x < 0 or battle.x >= map_width or battle.y < 0 or battle.y >= map_height:
+                                battles_to_remove.append(battle)
+                                print(f"Removing battle at ({battle.x}, {battle.y}) - outside map bounds")
+                    
+                    for battle in battles_to_remove:
+                        invasion_path.battles.remove(battle)
+                        removed_count += 1
+        
+        # Check distant battle paths
+        if hasattr(empire, 'distant_battle_paths'):
+            for path in empire.distant_battle_paths:
+                if hasattr(path, 'battles'):
+                    battles_to_remove = []
+                    for battle in path.battles:
+                        if hasattr(battle, 'x') and hasattr(battle, 'y'):
+                            if battle.x < 0 or battle.x >= map_width or battle.y < 0 or battle.y >= map_height:
+                                battles_to_remove.append(battle)
+                                print(f"Removing distant battle at ({battle.x}, {battle.y}) - outside map bounds")
+                    
+                    for battle in battles_to_remove:
+                        path.battles.remove(battle)
+                        removed_count += 1
+        
+        return removed_count
                 
 
     def _place_city_on_scene(self, city):
@@ -1179,6 +1452,9 @@ class MainWindow(QMainWindow):
     
     def remove_city(self, city):
         """Remove a city from the empire and scene."""
+        # Check if this city should be unticked in the default cities menu
+        self._untick_default_city_if_removed(city)
+        
         empire = self.state.current_empire_object
         if empire and city in empire.cities:
             city_index = self._get_city_index(city)
@@ -1188,6 +1464,52 @@ class MainWindow(QMainWindow):
         self._remove_city_marker(city)
         if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == EmpCityTypes.OUR:
             self.deselect_item()
+
+    def _untick_default_city_if_removed(self, city):
+        """Untick a city in the default cities menu if it was removed."""
+        if not hasattr(self, 'cities_data') or not hasattr(self, 'city_actions'):
+            return
+            
+        city_name = city.name
+        current_map_name = self._get_current_map_name()
+        
+        if not current_map_name:
+            return
+            
+        # Search for the city in all regions
+        for region_name, cities in self.cities_data.items():
+            if city_name in cities:
+                city_data = cities[city_name]
+                map_data = city_data.get("default_map", {}).get(current_map_name, {})
+                
+                # Check if this matches the coordinates of the removed city
+                if (map_data.get("x") == city.x and map_data.get("y") == city.y):
+                    # Find and untick the corresponding menu action
+                    if region_name in self.city_actions:
+                        for action in self.city_actions[region_name]:
+                            if action.text() == city_name:
+                                action.setChecked(False)
+                                # Update the region "Select All" state
+                                self._update_region_select_all_state(region_name)
+                                return
+
+    def _update_region_select_all_state(self, region_name):
+        """Update the Select All action state for a region based on its cities."""
+        if region_name not in self.region_actions or region_name not in self.city_actions:
+            return
+            
+        region_action = self.region_actions[region_name]
+        city_actions = self.city_actions[region_name]
+        
+        # Check if all cities are checked
+        all_checked = all(action.isChecked() for action in city_actions)
+        any_checked = any(action.isChecked() for action in city_actions)
+        
+        # Update the region action state
+        region_action.setChecked(all_checked)
+        
+        # Also update the main "Add all" state
+        self._update_main_select_all_state()
 
     def clear_empire_border_visual(self):
         """Clear empire border visuals."""
@@ -2266,7 +2588,7 @@ class MainWindow(QMainWindow):
 
         
         # validations
-        if city_obj.city_type == ed.CityType.OURS: #TODO: replace this by normal property check, not getattr
+        if city_obj.city_type == ed.CityType.OURS: 
             has_ours, ours = self.state.has_our_city()
             if has_ours and ours is not city_obj:
                 QMessageBox.warning(
@@ -2508,6 +2830,8 @@ class MainWindow(QMainWindow):
             kind = CITYTYPE_TO_KIND.get(city.city_type)
             if kind is not None:
                 item.setData(Qt.ItemDataRole.UserRole, kind)
+            else:
+                print(f"WARNING: No kind mapping found for city.city_type = {city.city_type}")
             self.scene.addItem(item)
             self.city_items[key] = item
     
@@ -2593,12 +2917,14 @@ class MainWindow(QMainWindow):
             else:
                 pixmap = QPixmap(file_path)
                 self.state.selected_empire_image = pixmap
+                self._current_image_path = file_path  # Track the image path
         # if (not self.state.check_if_empire()) or self.state.has_any_data(): 
         #     self._ensure_new_empire_for_new_background()
             
         if pil_img:
             pixmap = self.pil_to_qpixmap(pil_img)
             self.state.selected_empire_image = pixmap
+            # For PIL images, we don't have a file path unless it was loaded from _load_and_validate_empire_map
     
         self.scene.clear()
         self.bg_item = None
@@ -2639,6 +2965,9 @@ class MainWindow(QMainWindow):
     
     def on_new_empire(self):
         """Handle the New Empire action by showing the image selection dialog."""
+        # Check if we have unsaved changes
+        if not self._check_before_discarding():
+            return
         dialog = ImageSelectionDialog(self)
         
         if dialog.exec() == QDialog.Accepted:
@@ -2787,32 +3116,40 @@ class MainWindow(QMainWindow):
         qimg = QImage(data, w, h, QImage.Format.Format_RGBA8888)
         return QPixmap.fromImage(qimg)
 
-    # def _ensure_new_empire_for_new_background(self) -> bool:
-    #     """
-    #     Returns True if it's OK to proceed (new empire created or none existed).
-    #     Returns False if the user cancels.
-    #     """
-    #     # If there is data, warn
-    #     if self.state.check_if_empire() and self.state.has_any_data():
-    #         resp = QMessageBox.question(
-    #             self,
-    #             "New Empire",
-    #             "Create New Empire?",
-    #             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-    #             QMessageBox.StandardButton.No,
-    #         )
-    #         if resp != QMessageBox.StandardButton.Yes:
-    #             return False
-    
-        
-    #     self.state.new_empire() # Create a fresh empire 
-    #     self.city_items.clear() # Clear any old markers
-    #     return True
-        
 
     # -------------------------------------------------------
     # New "city" drop handler (generalized), keeps old name too
     # -------------------------------------------------------
+    def _add_city_to_empire(self, city, force_add=False):
+        """
+        Unified method to properly add a city to the empire and scene.
+        Handles all necessary steps: empire list, scene placement, name labels, tracking.
+        
+        Args:
+            city: The City object to add
+            force_add: If True, always add to empire.cities. If False, only add if not already there.
+        """
+        # Ensure there's an empire
+        if not self.state.check_if_empire():
+            self.state.new_empire()
+        empire = self.state.current_empire_object
+        
+        # Add to empire cities list if not already there or if forced
+        if force_add or city not in empire.cities:
+            empire.cities.append(city)
+        
+        # Place visual marker on scene
+        self._place_city_on_scene(city)
+        
+        # Create name label if name labels are visible
+        if hasattr(self.ui, 'actionViewOption4') and self.ui.actionViewOption4.isChecked():
+            self._create_city_name_label(city)
+        
+        # Update default cities menu state
+        self._update_default_cities_menu_state()
+        
+        return city
+
     def handle_city_drop(self, scene_pos):
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
@@ -2824,11 +3161,6 @@ class MainWindow(QMainWindow):
         if kind is None or not isinstance(kind, EmpCityTypes):
             return
 
-        # Ensure there's an empire
-        if not self.state.check_if_empire():
-            self.state.new_empire()
-        empire = self.state.current_empire_object
-
         # OUR city: single instance with move-confirmation
         if kind == EmpCityTypes.OUR:
             has_ours, ours = self.state.has_our_city()
@@ -2839,21 +3171,13 @@ class MainWindow(QMainWindow):
                 self._remove_city_marker(ours)
                 # Store center coordinates in city data
                 ours.x, ours.y = x, y
-                # Convert to top-left for scene placement
-                pixmap = self._pixmap_for_city(ours)
-                top_left_x = x - pixmap.width() // 2
-                top_left_y = y - pixmap.height() // 2
-                self._place_city_marker(ours, top_left_x, top_left_y)
+                # Use unified method to re-add the moved city
+                self._add_city_to_empire(ours, force_add=False)
                 return
 
             # Create new "Our City" with center coordinates
             ours = ed.City(name="Our City", x=x, y=y, city_type=ed.CityType.OURS, sells=[])
-            empire.cities.append(ours)
-            # Convert to top-left for scene placement
-            pixmap = self._pixmap_for_city(ours)
-            top_left_x = x - pixmap.width() // 2
-            top_left_y = y - pixmap.height() // 2
-            self._place_city_marker(ours, top_left_x, top_left_y)
+            self._add_city_to_empire(ours, force_add=True)
             return
 
         # Other city types: create freely
@@ -2862,12 +3186,7 @@ class MainWindow(QMainWindow):
             return
         # Store center coordinates in city data
         city = ed.City(name=default_name, x=x, y=y, city_type=ctype, sells=[])
-        empire.cities.append(city)
-        # Convert to top-left for scene placement
-        pixmap = self._pixmap_for_city(city)
-        top_left_x = x - pixmap.width() // 2
-        top_left_y = y - pixmap.height() // 2
-        self._place_city_marker(city, top_left_x, top_left_y)
+        self._add_city_to_empire(city, force_add=True)
 
     # Back-compat: keep the original name, delegate to new method
     def handle_drop_city(self, scene_pos):
@@ -3139,6 +3458,7 @@ class MainWindow(QMainWindow):
             # Keep track of region actions for parent-child relationships
             self.region_actions = {}
             self.city_actions = {}
+            self.select_all_regions_action = None  # Store reference to main "Add all" action
             
             # Get the current background map name
             current_map_name = self._get_current_map_name()
@@ -3157,8 +3477,13 @@ class MainWindow(QMainWindow):
                 # Check if any cities in this region have coordinates for current map
                 available_cities = []
                 for city_name, city_data in cities.items():
-                    if (city_data.get("default_map", {}).get(current_map_name)):
-                        available_cities.append((city_name, city_data))
+                    map_data = city_data.get("default_map", {}).get(current_map_name)
+                    if map_data:
+                        # Check if city coordinates fit within current background bounds
+                        if self._city_fits_on_current_background(map_data.get("x"), map_data.get("y")):
+                            available_cities.append((city_name, city_data))
+                        else:
+                            print(f"Excluding city {city_name} - coordinates ({map_data.get('x')}, {map_data.get('y')}) outside map bounds")
                 
                 # Only create region menu if it has cities for current map
                 if not available_cities:
@@ -3195,12 +3520,17 @@ class MainWindow(QMainWindow):
             
             # Add "Add all" action at the top if there are any regions
             if self.region_actions:
-                self.ui.menuDefaultCities.addAction(select_all_regions_action)
                 select_all_regions_action.triggered.connect(self.on_select_all_regions)
+                self.select_all_regions_action = select_all_regions_action  # Store reference
+                # Insert at the beginning of the menu
                 acts = self.ui.menuDefaultCities.actions()
-                if len(acts) > 1:  # More than just the "Add all" action
-                    self.ui.menuDefaultCities.insertAction(acts[-1], select_all_regions_action)
-                    self.ui.menuDefaultCities.removeAction(select_all_regions_action)  # Remove from end
+                if acts:
+                    self.ui.menuDefaultCities.insertAction(acts[0], select_all_regions_action)
+                else:
+                    self.ui.menuDefaultCities.addAction(select_all_regions_action)
+                
+                # Add a separator after the "Add all" action
+                self.ui.menuDefaultCities.addSeparator()
                     
         except Exception as e:
             print(f"Error populating Default Cities menu: {e}")
@@ -3228,16 +3558,41 @@ class MainWindow(QMainWindow):
             ed.EmpBackgroundTypes.SOUTH_MAP
         ]
         
-        self.ui.menuDefaultCities.setEnabled(should_enable)
+        self.ui.menuDefaultCities.setEnabled(should_enable)  
+
+    def _city_fits_on_current_background(self, x, y):
+        """Check if city coordinates fit within current background image bounds."""
+        if x is None or y is None:
+            return False
         
-        if should_enable:
-            print(f"Default Cities menu enabled for background type: {self.bg_type}")
-        else:
-            print(f"Default Cities menu disabled for background type: {self.bg_type}")
-    
+        if not self.bg_item:
+            return True  # No background set, allow all
+        
+        # Get background image dimensions
+        pixmap = self.bg_item.pixmap()
+        if pixmap.isNull():
+            return True
+        
+        bg_width = pixmap.width()
+        bg_height = pixmap.height()
+        
+        # Check if coordinates are within bounds (with some margin for city icon size)
+        margin = 50  # Allow some margin for city icon
+        return (x >= 0 and x < bg_width - margin and 
+                y >= 0 and y < bg_height - margin)
+        
     def on_select_all_regions(self, checked):
         """Handle 'Add all' checkbox for all regions."""
         for region_name in self.region_actions:
+            self.on_region_select_all(region_name, checked)
+    
+    def on_select_all_regions(self, checked):
+        """Handle the top-level "Add all" checkbox that selects/deselects all regions and cities."""
+        # Toggle all region "Select All" actions
+        for region_name in self.region_actions:
+            region_action = self.region_actions[region_name]
+            region_action.setChecked(checked)
+            # This will trigger the region's select all logic
             self.on_region_select_all(region_name, checked)
     
     def on_region_select_all(self, region_name, checked):
@@ -3265,11 +3620,25 @@ class MainWindow(QMainWindow):
             # Update region action state
             region_action.setChecked(all_selected)
         
+        # Update the main "Add all" action state
+        self._update_main_select_all_state()
+        
         # Place or remove the city on the map
         if checked:
             self._place_default_city(region_name, city_name)
         else:
             self._remove_default_city(region_name, city_name)
+    
+    def _update_main_select_all_state(self):
+        """Update the main 'Add all' action state based on all region states."""
+        if not hasattr(self, 'select_all_regions_action') or self.select_all_regions_action is None:
+            return
+            
+        # Check if all region "Select All" actions are checked
+        all_regions_selected = all(region_action.isChecked() for region_action in self.region_actions.values())
+        
+        # Update the main action state
+        self.select_all_regions_action.setChecked(all_regions_selected)
     
     def _place_default_city(self, region_name, city_name):
         """Place a default city on the map using coordinates from JSON."""
@@ -3294,21 +3663,20 @@ class MainWindow(QMainWindow):
                 print(f"Invalid coordinates for {city_name}: x={x}, y={y}")
                 return
             
-            # Ensure there's an empire
-            if not self.state.check_if_empire():
-                self.state.new_empire()
-            empire = self.state.current_empire_object
-            
-            # Create a city object
+            # Create a city object and map the type from JSON
             city = ed.City(city_name, x, y)
-            city.city_type = ed.CityType.ROMAN  
-            empire.cities.append(city)
-            # Place visual marker on scene using the proper method
-            self._place_city_on_scene(city)
+            # Map JSON type string to CityType enum
+            type_mapping = {
+                "ours": ed.CityType.OURS,
+                "roman": ed.CityType.ROMAN,
+                "distant": ed.CityType.DISTANT,
+                "trade": ed.CityType.TRADE,
+                "vulnerable": ed.CityType.VULNERABLE
+            }
+            city.city_type = type_mapping.get(city_type, ed.CityType.ROMAN)
             
-            # Create name label if name labels are visible
-            if self.ui.actionViewOption4.isChecked():
-                self._create_city_name_label(city)
+            # Use unified method to add the city properly
+            self._add_city_to_empire(city, force_add=True)
             
             #print(f"Placed {city_name} at ({x}, {y}) as {city_type}")
             
