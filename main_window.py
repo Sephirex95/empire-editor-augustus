@@ -234,8 +234,7 @@ class MainWindow(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
         
-        # Populate Default Cities menu
-        self.populate_default_cities_menu()
+
         
         # Set window icon
         import os
@@ -246,6 +245,8 @@ class MainWindow(QMainWindow):
         
         self.no_bg_item = None
         self.bg_item = None  # the background QGraphicsPixmapItem
+        self.bg_type = ed.EmpBackgroundTypes.NONE  # type of background currently set
+        self.cities_data = {}  # Store loaded cities data from JSON
         # Edge drawing state
         self.edge_drawing_active = False           # are we in the border drawing mode?
         self.edge_points_img = []                  # [(x_img, y_img), ...]
@@ -332,11 +333,16 @@ class MainWindow(QMainWindow):
         self.ui.actionViewOption2.triggered.connect(self.toggle_trade_routes_visibility)
         self.ui.actionViewOption3.triggered.connect(self.toggle_border_visibility)
         self.ui.actionViewOption4.triggered.connect(self.toggle_name_labels_visibility)
+        self.ui.actionRefreshMap.triggered.connect(self.refresh_map)
         
         self.ui.listWidget.itemClicked.connect(self.on_item_clicked)
-
+            # Populate Default Cities menu
+        self.populate_default_cities_menu()
         # Update UI state
         self.update_ui_state()
+        
+        # Update Default Cities menu state based on initial background type
+        self._update_default_cities_menu_state()
 
         # Drag handling
         self.selected_item = None
@@ -535,6 +541,12 @@ class MainWindow(QMainWindow):
         # Render trade routes for cities that have them
        # if hasattr(empire, 'cities'):
             #for city in empire.cities:
+        
+        # Repopulate Default Cities menu after loading empire
+        self.populate_default_cities_menu()
+        
+        # Update Default Cities menu state based on current background
+        self._update_default_cities_menu_state()
                 
 
     def _place_city_on_scene(self, city):
@@ -2344,7 +2356,7 @@ class MainWindow(QMainWindow):
                 if key in self.city_name_labels:
                     city_item = self.city_items.get(key)
                     if city_item:
-                        self._create_city_name_label(city, city_item)  # Recreate in new position
+                        self._create_city_name_label(city)  # Recreate in new position
                 
                 # Update trade route if city has one
                 if city.trade_route and city.trade_route.trade_points:
@@ -2507,7 +2519,7 @@ class MainWindow(QMainWindow):
             item.setVisible(self.ui.actionViewOption1.isChecked())
         
         # Create and add name label if needed
-        self._create_city_name_label(city, item)
+        self._create_city_name_label(city)
 
     def _apply_item_interactivity(self, item, enable: bool):
         item.setAcceptHoverEvents(enable)
@@ -2602,6 +2614,14 @@ class MainWindow(QMainWindow):
         self.ui.graphicsView.setEnabled(True)
         self.remove_no_background_message()
         
+        # Set background type to CUSTOM if not set via dialog
+        if open_dialog and not hasattr(self, '_bg_type_set_by_dialog'):
+            self.bg_type = ed.EmpBackgroundTypes.CUSTOM
+            self._update_default_cities_menu_state()  # Update menu state for custom background
+        
+        # Repopulate Default Cities menu
+        self.populate_default_cities_menu()
+        
         # Re-render empire elements if they exist
         if self.state.current_empire_object:
             empire = self.state.current_empire_object
@@ -2623,6 +2643,7 @@ class MainWindow(QMainWindow):
         
         if dialog.exec() == QDialog.Accepted:
             selected_image = dialog.get_selected_image()
+            selected_type = dialog.get_selected_image_type()
             if selected_image:
                 # Clear current empire data and set new background
                 self.clear_empire_data()
@@ -2644,11 +2665,16 @@ class MainWindow(QMainWindow):
                 
                 self.no_bg_item = None
                 self.bg_item = QGraphicsPixmapItem(pixmap)
+                self.bg_type = selected_type  # Store the background type
+                self._update_default_cities_menu_state()  # Update menu state based on new background
                 self.bg_item.setZValue(-1000)  # keep it behind markers
                 self.scene.addItem(self.bg_item)
                 self.scene.setSceneRect(pixmap.rect())
                 self.ui.graphicsView.setEnabled(True)
                 self.remove_no_background_message()
+                
+                # Repopulate Default Cities menu for new background
+                self.populate_default_cities_menu()
                 
                 # Update window title to indicate new file
                 self.setWindowTitle("Empire Editor - New Empire")
@@ -2851,12 +2877,17 @@ class MainWindow(QMainWindow):
     # City Name Label Management
     # -------------------------------------------------------
     
-    def _create_city_name_label(self, city, city_item):
+    def _create_city_name_label(self, city):
         """Create a name label for a city positioned above the city icon."""
         if not hasattr(city, 'name') or not city.name:
             return
             
         key = id(city)
+        
+        # Find the city item
+        if key not in self.city_items:
+            return  # No visual city item exists
+        city_item = self.city_items[key]
         
         # Remove existing label if it exists
         if key in self.city_name_labels:
@@ -3036,6 +3067,58 @@ class MainWindow(QMainWindow):
         
         print(f"City name labels visibility: {'ON' if visible else 'OFF'}")
 
+    def refresh_map(self):
+        """Refresh and re-render all map elements (F5)."""
+        print("Refreshing map...")
+        
+        if not self.state.check_if_empire():
+            print("No empire to refresh")
+            return
+            
+        empire = self.state.current_empire_object
+        
+        # Clear all visual elements except background
+        if self.scene and self.bg_item:
+            # Remove all items except background
+            for item in list(self.scene.items()):
+                if item != self.bg_item:
+                    self.scene.removeItem(item)
+        
+        # Clear internal state
+        self.city_items.clear()
+        self.city_name_labels.clear()
+        self._clear_scene_state()
+        
+        # Re-render all empire elements
+        
+        # 1. Re-render cities
+        if hasattr(empire, 'cities'):
+            for city in empire.cities:
+                self._place_city_on_scene(city)
+                
+                # Always create name labels (visibility will be controlled by toggle)
+                self._create_city_name_label(city)
+                
+                # Re-render trade routes
+                if city.trade_route is not None:
+                    self.render_trade_route(city)
+        
+        # 2. Re-render empire border if enabled
+        if self.ui.actionViewOption3.isChecked() and hasattr(empire, 'border') and empire.border:
+            self.empire_border = True
+            self.render_empire_border()
+        
+        # 3. Update visibility states based on current toggle settings
+        self.toggle_cities_visibility()
+        self.toggle_trade_routes_visibility()
+        self.toggle_border_visibility()
+        self.toggle_name_labels_visibility()
+        
+        # 4. Repopulate Default Cities menu
+        self.populate_default_cities_menu()
+        
+        print("Map refresh completed")
+
     def populate_default_cities_menu(self):
         """Populate the Default Cities menu with hierarchical regions and cities from JSON."""
         try:
@@ -3048,7 +3131,7 @@ class MainWindow(QMainWindow):
                 return
                 
             with open(json_path, 'r', encoding='utf-8') as f:
-                cities_data = json.load(f)
+                self.cities_data = json.load(f)
             
             # Clear existing menu items
             self.ui.menuDefaultCities.clear()
@@ -3056,11 +3139,31 @@ class MainWindow(QMainWindow):
             # Keep track of region actions for parent-child relationships
             self.region_actions = {}
             self.city_actions = {}
+            
+            # Get the current background map name
+            current_map_name = self._get_current_map_name()
+            if not current_map_name:
+                # No background set, show message
+                no_bg_action = QAction("No background set - select a background first", self)
+                no_bg_action.setEnabled(False)
+                self.ui.menuDefaultCities.addAction(no_bg_action)
+                return
+            
             select_all_regions_action = QAction(f"Add all", self)
-            self.ui.menuDefaultCities.addAction(select_all_regions_action)
-  # top
+            select_all_regions_action.setCheckable(True)
+            
             # Create region menus with cities
-            for region_name, cities in cities_data.items():
+            for region_name, cities in self.cities_data.items():
+                # Check if any cities in this region have coordinates for current map
+                available_cities = []
+                for city_name, city_data in cities.items():
+                    if (city_data.get("default_map", {}).get(current_map_name)):
+                        available_cities.append((city_name, city_data))
+                
+                # Only create region menu if it has cities for current map
+                if not available_cities:
+                    continue
+                    
                 # Create region submenu
                 region_menu = self.ui.menuDefaultCities.addMenu(region_name)
                 
@@ -3075,12 +3178,10 @@ class MainWindow(QMainWindow):
                 
                 # Add separator
                 region_menu.addSeparator()
-                select_all_regions_action.setCheckable(True)
-                self.ui.menuDefaultCities.addAction(select_all_regions_action)
-                #select_all_regions_action.triggered.connect()
-                # Add individual city actions
+                
+                # Add individual city actions (only for available cities)
                 region_city_actions = []
-                for city_name in cities.keys():
+                for city_name, city_data in available_cities:
                     city_action = QAction(city_name, self)
                     city_action.setCheckable(True)
                     city_action.triggered.connect(
@@ -3090,13 +3191,54 @@ class MainWindow(QMainWindow):
                     region_menu.addAction(city_action)
                     region_city_actions.append(city_action)
                 
-                
                 self.city_actions[region_name] = region_city_actions
+            
+            # Add "Add all" action at the top if there are any regions
+            if self.region_actions:
+                self.ui.menuDefaultCities.addAction(select_all_regions_action)
+                select_all_regions_action.triggered.connect(self.on_select_all_regions)
                 acts = self.ui.menuDefaultCities.actions()
-                if acts:
-                    self.ui.menuDefaultCities.insertAction(acts[0], select_all_regions_action) 
+                if len(acts) > 1:  # More than just the "Add all" action
+                    self.ui.menuDefaultCities.insertAction(acts[-1], select_all_regions_action)
+                    self.ui.menuDefaultCities.removeAction(select_all_regions_action)  # Remove from end
+                    
         except Exception as e:
             print(f"Error populating Default Cities menu: {e}")
+    
+    def _get_current_map_name(self):
+        """Get the current map name based on background type."""
+        if self.bg_type == ed.EmpBackgroundTypes.BIG_MAP:
+            return "Orbis Terrarum"
+        elif self.bg_type == ed.EmpBackgroundTypes.NORTH_MAP:
+            return "Occidentalis"
+        elif self.bg_type == ed.EmpBackgroundTypes.SOUTH_MAP:
+            return "Orientalis"
+        else:
+            if self.bg_item is not None:
+                return ed.EmpBackgroundTypes.CUSTOM  #
+            else:
+                return ed.EmpBackgroundTypes.NONE
+    
+    def _update_default_cities_menu_state(self):
+        """Enable/disable Default Cities menu based on background type."""
+        # Enable menu only for predefined map types
+        should_enable = self.bg_type in [
+            ed.EmpBackgroundTypes.BIG_MAP,
+            ed.EmpBackgroundTypes.NORTH_MAP,
+            ed.EmpBackgroundTypes.SOUTH_MAP
+        ]
+        
+        self.ui.menuDefaultCities.setEnabled(should_enable)
+        
+        if should_enable:
+            print(f"Default Cities menu enabled for background type: {self.bg_type}")
+        else:
+            print(f"Default Cities menu disabled for background type: {self.bg_type}")
+    
+    def on_select_all_regions(self, checked):
+        """Handle 'Add all' checkbox for all regions."""
+        for region_name in self.region_actions:
+            self.on_region_select_all(region_name, checked)
     
     def on_region_select_all(self, region_name, checked):
         """Handle region "Select All" checkbox."""
@@ -3122,10 +3264,87 @@ class MainWindow(QMainWindow):
             
             # Update region action state
             region_action.setChecked(all_selected)
+        
+        # Place or remove the city on the map
+        if checked:
+            self._place_default_city(region_name, city_name)
+        else:
+            self._remove_default_city(region_name, city_name)
+    
+    def _place_default_city(self, region_name, city_name):
+        """Place a default city on the map using coordinates from JSON."""
+        try:
+            current_map_name = self._get_current_map_name()
+            if not current_map_name or not hasattr(self, 'cities_data'):
+                return
             
-            # TODO: Implement actual city placement logic here
-            # This is where you would add the city to the map based on the JSON coordinates
-            #self.handle_city_drop(self._scene_to_image_xy((0, 0)))  # Placeholder for actual coordinates
+            # Get city data from JSON
+            city_data = self.cities_data.get(region_name, {}).get(city_name, {})
+            map_data = city_data.get("default_map", {}).get(current_map_name, {})
+            
+            if not map_data:
+                print(f"No coordinates found for {city_name} on {current_map_name}")
+                return
+            
+            x = map_data.get("x")
+            y = map_data.get("y")
+            city_type = map_data.get("type", "roman")  # Default to roman
+            
+            if x is None or y is None:
+                print(f"Invalid coordinates for {city_name}: x={x}, y={y}")
+                return
+            
+            # Ensure there's an empire
+            if not self.state.check_if_empire():
+                self.state.new_empire()
+            empire = self.state.current_empire_object
+            
+            # Create a city object
+            city = ed.City(city_name, x, y)
+            city.city_type = ed.CityType.ROMAN  
+            empire.cities.append(city)
+            # Place visual marker on scene using the proper method
+            self._place_city_on_scene(city)
+            
+            # Create name label if name labels are visible
+            if self.ui.actionViewOption4.isChecked():
+                self._create_city_name_label(city)
+            
+            #print(f"Placed {city_name} at ({x}, {y}) as {city_type}")
+            
+        except Exception as e:
+            print(f"Error placing city {city_name}: {e}")
+    
+    def _remove_default_city(self, region_name, city_name):
+        """Remove a default city from the map."""
+        try:
+            if not self.state.check_if_empire():
+                return
+            
+            empire = self.state.current_empire_object
+            
+            # Find and remove the city
+            cities_to_remove = [city for city in empire.cities if city.name == city_name]
+            for city in cities_to_remove:
+                empire.cities.remove(city)
+                self._remove_city_marker(city)
+                
+                # Remove name label if it exists using proper key
+                city_key = id(city)
+                if city_key in self.city_name_labels:
+                    try:
+                        text_item = self.city_name_labels[city_key]
+                        if hasattr(text_item, 'bg_rect'):
+                            self.scene.removeItem(text_item.bg_rect)
+                        self.scene.removeItem(text_item)
+                        del self.city_name_labels[city_key]
+                    except (RuntimeError, KeyError):
+                        pass
+            
+            print(f"Removed {city_name}")
+            
+        except Exception as e:
+            print(f"Error removing city {city_name}: {e}")
     # -------------------------------------------------------
     # Non-city handler(s)
     # -------------------------------------------------------

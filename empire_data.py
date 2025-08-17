@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
 from typing import List, Optional
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -44,6 +44,13 @@ class TradeRouteType(str, Enum):
     LAND = "land"
     SEA = "sea"
 
+class EmpBackgroundTypes(Enum):
+    BIG_MAP = auto()
+    SOUTH_MAP = auto()
+    NORTH_MAP = auto()
+    CUSTOM = auto()  
+    LEGACY = auto()  
+    NONE = auto()  # No background set
 
 class ResourceType(str, Enum):
     WHEAT = "wheat"

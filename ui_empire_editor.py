@@ -1,5 +1,6 @@
 # ui_empire_editor.py
 import os
+import empire_data as ed
 from PySide6.QtCore import Qt, QCoreApplication, QSize
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
@@ -61,6 +62,10 @@ class Ui_MainWindow(object):
         self.actionViewOption4.setObjectName("actionViewOption4")
         self.actionViewOption4.setCheckable(True)
         self.actionViewOption4.setChecked(False)  # Off by default
+
+        self.actionRefreshMap = QAction(MainWindow)
+        self.actionRefreshMap.setObjectName("actionRefreshMap")
+        self.actionRefreshMap.setShortcut("F5")
 
         # GitHub submenu actions
         self.actionGitHub_Augustus = QAction(MainWindow); self.actionGitHub_Augustus.setObjectName("actionGitHub_Augustus")
@@ -128,6 +133,8 @@ class Ui_MainWindow(object):
         self.menuView.addAction(self.actionViewOption2)
         self.menuView.addAction(self.actionViewOption3)
         self.menuView.addAction(self.actionViewOption4)
+        self.menuView.addSeparator()
+        self.menuView.addAction(self.actionRefreshMap)
         # Settings
         self.menuSettings.addAction(self.actionOptions)
 
@@ -159,6 +166,7 @@ class Ui_MainWindow(object):
         self.menuEmpireProperties.setTitle(_t("MainWindow", "Empire properties", None))
         self.menuView.setTitle(_t("MainWindow", "View", None))
         self.menuDefaultCities.setTitle(_t("MainWindow", "Default Cities", None))
+        self.menuDefaultCities.setEnabled(False)  # Disabled by default
         self.menuSettings.setTitle(_t("MainWindow", "Settings", None))
         self.menuHelp.setTitle(_t("MainWindow", "Help", None))
         self.menuGitHub.setTitle(_t("MainWindow", "GitHub", None))
@@ -177,6 +185,7 @@ class Ui_MainWindow(object):
         self.actionViewOption2.setText(_t("MainWindow", "Show Trade Routes", None))
         self.actionViewOption3.setText(_t("MainWindow", "Show Empire Border", None))
         self.actionViewOption4.setText(_t("MainWindow", "Show Name Labels", None))
+        self.actionRefreshMap.setText(_t("MainWindow", "Refresh Map", None))
         
         self.actionGitHub_Augustus.setText(_t("MainWindow", "Augustus", None))
         self.actionGitHub_Editor.setText(_t("MainWindow", "Augustus Empire Editor", None))
@@ -192,16 +201,18 @@ class ImageSelectionDialog(QDialog):
         self.setModal(True)
         self.setMinimumSize(600, 400)
         self.resize(600, 400)
-        
+        self.selected_type = ""
         # Store the selected image path
         self.selected_image_path = None
+        # Store the selected image type
+        self.selected_image_type = None
         
         # Default images (use absolute paths)
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.default_images = [
-            os.path.join(base_dir, "augustus_assets", "Areldir_maps", "Orbis_Terrarum_Empire_Map.png"),
-            os.path.join(base_dir, "augustus_assets", "Areldir_maps", "Occidentalis_Empire_Map.png"),
-            os.path.join(base_dir, "augustus_assets", "Areldir_maps", "Orientalis_Empire_Map.png"),
+            (os.path.join(base_dir, "augustus_assets", "Areldir_maps", "Orbis_Terrarum_Empire_Map.png"), ed.EmpBackgroundTypes.BIG_MAP),
+            (os.path.join(base_dir, "augustus_assets", "Areldir_maps", "Occidentalis_Empire_Map.png"), ed.EmpBackgroundTypes.NORTH_MAP),
+            (os.path.join(base_dir, "augustus_assets", "Areldir_maps", "Orientalis_Empire_Map.png"), ed.EmpBackgroundTypes.SOUTH_MAP),
         ]
         
         self.setup_ui()
@@ -280,12 +291,13 @@ class ImageSelectionDialog(QDialog):
         """Populate the list with default images."""
         self.image_list.clear()
         
-        for image_path in self.default_images:
+        for (image_path, img_type) in self.default_images:
             # Create display name from filename
             if image_path and os.path.exists(image_path):
                 display_name = os.path.basename(image_path).replace('_', ' ').replace('.png', '')
                 item = QListWidgetItem(display_name)
-                item.setData(Qt.ItemDataRole.UserRole, image_path)  # Store full path
+                # Store both path and type as a tuple in UserRole
+                item.setData(Qt.ItemDataRole.UserRole, (image_path, img_type))
                 self.image_list.addItem(item)
     
     def on_selection_changed(self, current_row):
@@ -293,12 +305,22 @@ class ImageSelectionDialog(QDialog):
         if current_row >= 0:
             item = self.image_list.item(current_row)
             if item:
-                image_path = item.data(Qt.ItemDataRole.UserRole)
-                self.selected_image_path = image_path
-                self.update_preview(image_path)
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(data, tuple) and len(data) == 2:
+                    # New format: (image_path, img_type)
+                    image_path, img_type = data
+                    self.selected_image_path = image_path
+                    self.selected_image_type = img_type
+                else:
+                    # Legacy format: just image_path (for custom images)
+                    self.selected_image_path = data
+                    self.selected_image_type = ed.EmpBackgroundTypes.CUSTOM
+                self.update_preview(self.selected_image_path)
                 self.ok_button.setEnabled(True)
         else:
             self.ok_button.setEnabled(False)
+            self.selected_image_path = None
+            self.selected_image_type = None
             self.preview_label.setText("Select an image to preview")
     
     def update_preview(self, image_path):
@@ -339,6 +361,7 @@ class ImageSelectionDialog(QDialog):
             # Add custom image to the list
             display_name = f"Custom: {os.path.basename(file_path)}"
             item = QListWidgetItem(display_name)
+            # Store just the path for custom images (no type)
             item.setData(Qt.ItemDataRole.UserRole, file_path)
             self.image_list.addItem(item)
             
@@ -348,6 +371,10 @@ class ImageSelectionDialog(QDialog):
     def get_selected_image(self):
         """Return the path of the selected image."""
         return self.selected_image_path
+    
+    def get_selected_image_type(self):
+        """Return the type of the selected image."""
+        return self.selected_image_type
 
 
 class EmpirePropertiesDialog(QDialog):
