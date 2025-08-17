@@ -2,7 +2,7 @@
 """
 Created on Sun Aug 10 21:51:04 2025
 
-@author: jslaw
+@author: sephirex95
 """
 
 # -*- coding: utf-8 -*-

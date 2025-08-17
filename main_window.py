@@ -476,7 +476,7 @@ class MainWindow(QMainWindow):
         
         # Enable/disable Empire Properties action based on whether we have an empire
         if hasattr(self.ui, 'actionEmpireProperties'):
-            self.ui.actionEmpireProperties.setEnabled(has_empire)
+            self.ui.menuEmpireProperties.setEnabled(has_empire)
     
     def _get_city_index(self, city) -> int | None:
         """Get the index of a city in the current empire's cities list."""

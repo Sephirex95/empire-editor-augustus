@@ -2,7 +2,7 @@
 """
 Created on Sun Aug 10 22:02:04 2025
 
-@author: jslaw
+@author: Sephirex95
 """
 # city_properties_dialog.py
 from PySide6.QtCore import QTimer, Qt
