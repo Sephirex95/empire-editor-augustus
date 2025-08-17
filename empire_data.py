@@ -37,7 +37,7 @@ class CityType(str, Enum):
     ROMAN = "roman"
     DISTANT = "distant"
     TRADE = "trade"
-    VULNERABLE = "vulnerable"   # distant roman city that can be attacked
+    VULNERABLE = "vulnerable"  
 
 
 class TradeRouteType(str, Enum):
@@ -260,8 +260,7 @@ class Empire:
             c_el.set("name", c.name)
             c_el.set("x", str(c.x))
             c_el.set("y", str(c.y))
-            if c.city_type and c.city_type != CityType.TRADE:
-                c_el.set("type", c.city_type)
+            c_el.set("type", CityType(c.city_type).value)
 
             if c.trade_route is not None:
                 tr = c.trade_route
@@ -289,12 +288,9 @@ class Empire:
                 omit_amount = (c.city_type == CityType.OURS)
                 for r in c.sells:
                     r_el = SubElement(sells_el, "resource")
-                    r_el.set("type", r.resource_type)
+                    r_el.set("type", ResourceType(r.resource_type).value)
                     if not omit_amount and r.amount not in (None, 1):
                         r_el.set("amount", str(r.amount))
-
-            if c.city_type == CityType.OURS and not c.sells:
-                raise ValueError("City '%s' is type='ours' but has no <sells> resources." % c.name)
 
         if self.invasion_paths:
             inv_el = SubElement(root, "invasion_paths")

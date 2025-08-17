@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import shutil
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QGraphicsScene, QGraphicsView,
     QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox,
@@ -203,7 +204,9 @@ class ProgramState:
         return self.current_empire_object is not None
 
     def new_empire(self):
-        self.current_empire_object = ed.Empire()
+        """Create a completely new, clean empire."""
+        # Always start with a clean version 1 empire (no map_info)
+        self.current_empire_object = ed.Empire(version=1)
     
     
     
@@ -418,23 +421,142 @@ class MainWindow(QMainWindow):
         except ValueError:
             return None
     
-    def _check_before_discarding(self):
-        if self.state.check_if_empire() and self.state.has_any_data():
-            resp = QMessageBox.question(
-                self, "Load Empire",
-                "You have unsaved work in the current empire.\n"
-                "You will lose you progress, continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            if resp != QMessageBox.StandardButton.Yes:
-                return False
-        return True
+    def _check_before_discarding(self, context="load"):
+        """Check for unsaved changes before discarding current work.
+        
+        Args:
+            context: The context for the dialog. Options:
+                - "load": Loading a new empire
+                - "new": Creating a new empire
+                - "close": Closing the application
+                - "background": Changing background image
+        """
+        if not (self.state.check_if_empire() and self.state.has_any_data()):
+            return True
+            
+        context_info = {
+            "load": ("Load Empire", "You have unsaved work in the current empire.\nYou will lose your progress, continue?"),
+            "new": ("New Empire", "You have unsaved work in the current empire.\nYou will lose your progress, continue?"),
+            "close": ("Close Application", "You have unsaved work in the current empire.\nYou will lose your progress if you close now, continue?"),
+            "background": ("Change Background", "You have unsaved work in the current empire.\nChanging background may affect your work, continue?")
+        }
+        
+        title, message = context_info.get(context, context_info["load"])
+        
+        resp = QMessageBox.question(
+            self, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        return resp == QMessageBox.StandardButton.Yes
+
+    def closeEvent(self, event):
+        """Handle window close event to prevent unsaved data loss."""
+        if self._check_before_discarding("close"):
+            event.accept()
+        else:
+            event.ignore()
+
+    def _show_elements_wont_fit_dialog(self, out_of_bounds_items):
+        """Show dialog warning about elements that won't fit in the selected background.
+        
+        Args:
+            out_of_bounds_items: List of strings describing what won't fit
+            
+        Returns:
+            bool: True if user wants to continue, False otherwise
+        """
+        if not out_of_bounds_items:
+            return True
+            
+        items_text = "\n".join(f"• {item}" for item in out_of_bounds_items)
+        message = (
+            "Some elements do not fit in the selected background:\n\n"
+            f"{items_text}\n\n"
+            "These elements will be removed or hidden. Are you sure you want to continue?"
+        )
+        
+        resp = QMessageBox.question(
+            self, "Elements Won't Fit", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        return resp == QMessageBox.StandardButton.Yes
+
+    def _validate_empire_elements_fit_background(self, new_bg_pixmap):
+        """Check if current empire elements fit within the new background dimensions.
+        
+        Args:
+            new_bg_pixmap: The new background QPixmap to validate against
+            
+        Returns:
+            list: List of strings describing elements that won't fit
+        """
+        out_of_bounds = []
+        
+        if not new_bg_pixmap or new_bg_pixmap.isNull():
+            return out_of_bounds
+            
+        bg_width = new_bg_pixmap.width()
+        bg_height = new_bg_pixmap.height()
+        empire = self.state.current_empire_object
+        
+        if not empire:
+            return out_of_bounds
+            
+        # Check cities
+        if hasattr(empire, 'cities'):
+            for city in empire.cities:
+                if hasattr(city, 'x') and hasattr(city, 'y'):
+                    if not (0 <= city.x < bg_width and 0 <= city.y < bg_height):
+                        out_of_bounds.append(f"City '{city.name}' at ({city.x}, {city.y})")
+        
+        # Check border edges
+        if hasattr(empire, 'border') and empire.border and hasattr(empire.border, 'edges'):
+            for i, edge in enumerate(empire.border.edges):
+                if hasattr(edge, 'x') and hasattr(edge, 'y'):
+                    if not (0 <= edge.x < bg_width and 0 <= edge.y < bg_height):
+                        out_of_bounds.append(f"Border edge {i+1} at ({edge.x}, {edge.y})")
+        
+        # Check trade route points
+        if hasattr(empire, 'cities'):
+            for city in empire.cities:
+                if (hasattr(city, 'trade_route') and city.trade_route and 
+                    hasattr(city.trade_route, 'trade_points') and city.trade_route.trade_points):
+                    for i, point in enumerate(city.trade_route.trade_points):
+                        if hasattr(point, 'x') and hasattr(point, 'y'):
+                            if not (0 <= point.x < bg_width and 0 <= point.y < bg_height):
+                                out_of_bounds.append(f"Trade route point {i+1} for '{city.name}' at ({point.x}, {point.y})")
+        
+        return out_of_bounds
+
+    def _update_empire_map_info(self, image_path=None, pixmap=None):
+        """Update the current empire's map information with background details."""
+        empire = self.state.current_empire_object
+        if not empire:
+            return
+            
+        # Ensure we have a map_info object (upgrade to version 2 if needed)
+        if empire.version == 1 or empire.map_info is None:
+            empire.version = 2
+            empire.map_info = ed.Map()
+        
+        # Update map information
+        if image_path:
+            empire.map_info.image = image_path
+        if pixmap and not pixmap.isNull():
+            empire.map_info.width = pixmap.width()
+            empire.map_info.height = pixmap.height()
+            # Reset offsets for new background
+            empire.map_info.x_offset = 0
+            empire.map_info.y_offset = 0
+            empire.map_info.coordinates_x_offset = 0
+            empire.map_info.coordinates_y_offset = 0
 
     def open_empire_xml(self):
         """Open and load empire from XML file."""
         # Check if we have unsaved changes
-        if not self._check_before_discarding():
+        if not self._check_before_discarding("load"):
             return
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Empire XML", "", "XML Files (*.xml);;All Files (*)"
@@ -505,7 +627,7 @@ class MainWindow(QMainWindow):
             empire = self.state.current_empire_object
             
             # Update map_info based on current background before saving
-            self._update_empire_map_info(empire, file_path)
+            self._prepare_empire_map_info_for_save(empire, file_path)
             
             empire.write_xml(file_path)
             
@@ -520,7 +642,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Ok
             )
 
-    def _update_empire_map_info(self, empire, file_path):
+    def _prepare_empire_map_info_for_save(self, empire, file_path):
         """Update empire map_info based on current background before saving."""
         if not self.bg_item or self.bg_type == ed.EmpBackgroundTypes.LEGACY:
             # For legacy backgrounds or no background, keep version 1 format
@@ -536,24 +658,40 @@ class MainWindow(QMainWindow):
             empire.map_info = None
             return
         
-        # Determine relative image path
+        # Get the directory where the XML file will be saved
         xml_dir = os.path.dirname(file_path)
+        images_dir = os.path.join(xml_dir, 'images')
+        
+        # Create images directory if it doesn't exist
+        if not os.path.exists(images_dir):
+            os.makedirs(images_dir)
+        
+        # Get the filename from the current image path
         if hasattr(self, '_current_image_path') and self._current_image_path:
-            # Try to make the path relative to the XML file
-            try:
-                image_path = os.path.relpath(self._current_image_path, xml_dir)
-            except ValueError:
-                # If relative path can't be computed (different drives on Windows), use absolute
-                image_path = self._current_image_path
+            image_filename = os.path.basename(self._current_image_path)
+            source_path = self._current_image_path
         else:
-            # No known image path, use placeholder
-            image_path = "background.png"
+            # If no known image path, use a default name
+            image_filename = "background.png"
+            source_path = None
+        
+        # Target path in the images folder
+        target_path = os.path.join(images_dir, image_filename)
+        
+        # Copy the image file if it doesn't already exist and we have a source
+        if source_path and os.path.exists(source_path) and not os.path.exists(target_path):
+            try:
+                shutil.copy2(source_path, target_path)
+                print(f"Copied background image to: {target_path}")
+            except Exception as e:
+                print(f"Warning: Could not copy image file: {e}")
         
         # Create or update map_info
         if empire.map_info is None:
             empire.map_info = ed.Map()
         
-        empire.map_info.image = image_path
+        # Set image path to just the filename (game engine requirement)
+        empire.map_info.image = image_filename
         empire.map_info.width = pixmap.width()
         empire.map_info.height = pixmap.height()
         empire.map_info.x_offset = 0
@@ -562,7 +700,7 @@ class MainWindow(QMainWindow):
         empire.map_info.coordinates_x_offset = 0
         empire.map_info.coordinates_y_offset = 0
         
-        print(f"Updated empire map_info: {image_path} ({pixmap.width()}x{pixmap.height()})")
+        print(f"Updated empire map_info: {image_filename} ({pixmap.width()}x{pixmap.height()})")
 
     def _render_loaded_empire(self):
         """Render the loaded empire data onto the scene."""
@@ -582,7 +720,7 @@ class MainWindow(QMainWindow):
                     self.scene.removeItem(item)
         elif self.bg_item == None:
             if empire.version > 1:
-                print("placeholder - Loading background image")
+                print("Loading background image from empire map info")
             else:
                 print("loading default empire map")
                 self.on_default_empire_map_selected()
@@ -702,7 +840,9 @@ class MainWindow(QMainWindow):
                 # Set the background image
                 self._current_image_path = found_image_path  # Track the loaded image path
                 self.set_background_image(pil_image)
-                self.bg_type = ed.EmpBackgroundTypes.CUSTOM
+                
+                # Determine if this is a default map or custom map
+                self.bg_type = self._get_background_type_from_image_path(found_image_path)
                 self._update_default_cities_menu_state()
                 
                 return True
@@ -758,6 +898,58 @@ class MainWindow(QMainWindow):
             return filename_images_path
         
         return None
+    
+    def _is_default_map_image(self, image_path):
+        """Check if the image path corresponds to one of the default empire maps."""
+        if not image_path:
+            return False
+            
+        # Get just the filename for comparison
+        filename = os.path.basename(image_path)
+        
+        # Default map filenames
+        default_map_names = {
+            "Orbis_Terrarum_Empire_Map.png": ed.EmpBackgroundTypes.BIG_MAP,
+            "Occidentalis_Empire_Map.png": ed.EmpBackgroundTypes.NORTH_MAP,
+            "Orientalis_Empire_Map.png": ed.EmpBackgroundTypes.SOUTH_MAP
+        }
+        
+        # Also check if the path contains the characteristic folder structure
+        if filename in default_map_names:
+            return True
+            
+        # Check if the path contains the augustus_assets/Areldir_maps structure
+        normalized_path = image_path.replace('\\', '/')
+        for default_filename in default_map_names.keys():
+            if f"augustus_assets/Areldir_maps/{default_filename}" in normalized_path:
+                return True
+                
+        return False
+    
+    def _get_background_type_from_image_path(self, image_path):
+        """Get the EmpBackgroundTypes enum value for a given image path."""
+        if not image_path:
+            return ed.EmpBackgroundTypes.CUSTOM
+            
+        filename = os.path.basename(image_path)
+        
+        default_map_types = {
+            "Orbis_Terrarum_Empire_Map.png": ed.EmpBackgroundTypes.BIG_MAP,
+            "Occidentalis_Empire_Map.png": ed.EmpBackgroundTypes.NORTH_MAP,
+            "Orientalis_Empire_Map.png": ed.EmpBackgroundTypes.SOUTH_MAP
+        }
+        
+        # Check filename first
+        if filename in default_map_types:
+            return default_map_types[filename]
+            
+        # Check if the path contains the characteristic folder structure
+        normalized_path = image_path.replace('\\', '/')
+        for default_filename, bg_type in default_map_types.items():
+            if f"augustus_assets/Areldir_maps/{default_filename}" in normalized_path:
+                return bg_type
+        
+        return ed.EmpBackgroundTypes.CUSTOM
     
     def _validate_empire_bounds(self, empire, map_width, map_height):
         """Remove empire elements that are outside map bounds. Returns count of removed elements."""
@@ -2531,7 +2723,19 @@ class MainWindow(QMainWindow):
         x, y = xy
         
         if not self.state.check_if_empire():
+            # Create empire and update with current background info if available
             self.state.new_empire()
+            if self.bg_item and hasattr(self, '_current_image_path'):
+                # Update with current background information
+                pixmap = self.bg_item.pixmap()
+                if self.bg_type == ed.EmpBackgroundTypes.CUSTOM:
+                    self.state.current_empire_object.version = 2
+                    self.state.current_empire_object.map_info = ed.Map(
+                        image=os.path.basename(self._current_image_path),
+                        width=pixmap.width(),
+                        height=pixmap.height()
+                    )
+                    self.state.current_empire_object.show_ireland = False
 
         # Start edge drawing immediately
         self._begin_edge_drawing(x, y)
@@ -2728,16 +2932,6 @@ class MainWindow(QMainWindow):
             self.ui.listWidget.addItem(item)
         self.ui.listWidget.setIconSize(QSize(64, 64))
 
-    # def on_map_setting_changed(self, index):
-    #     if self.ui.mapSettingsMenu.currentText() == "Default Empire Map":
-    #         if "The_empire" in self.state.images:
-    #             self.set_background_image(self.state.images["The_empire"])
-    #         else:
-    #             QMessageBox.warning(
-    #                 self, "Missing Map",
-    #                 "The 'Default Empire Map' is not available in the loaded images.",
-    #                 QMessageBox.StandardButton.Ok
-    #                 )
     def _no_bg_item_alive(self):
         # alive iff we have an object AND it still belongs to a scene
         return self.no_bg_item is not None and self.no_bg_item.scene() is not None
@@ -2909,6 +3103,10 @@ class MainWindow(QMainWindow):
     def set_background_image(self, pil_img, open_dialog = False):
         #if no empire atm -> ask to create one
         if open_dialog:
+            # Check for unsaved changes before changing background
+            if not self._check_before_discarding("background"):
+                return
+                
             file_path, _ = QFileDialog.getOpenFileName(
                 self, "Select Background Image", "", "Images (*.png *.jpg *.bmp *.gif)"
             )
@@ -2916,6 +3114,13 @@ class MainWindow(QMainWindow):
                 return
             else:
                 pixmap = QPixmap(file_path)
+                
+                # Validate that existing elements will fit in the new background
+                out_of_bounds = self._validate_empire_elements_fit_background(pixmap)
+                if out_of_bounds:
+                    if not self._show_elements_wont_fit_dialog(out_of_bounds):
+                        return  # User cancelled
+                
                 self.state.selected_empire_image = pixmap
                 self._current_image_path = file_path  # Track the image path
         # if (not self.state.check_if_empire()) or self.state.has_any_data(): 
@@ -2923,6 +3128,13 @@ class MainWindow(QMainWindow):
             
         if pil_img:
             pixmap = self.pil_to_qpixmap(pil_img)
+            
+            # Validate that existing elements will fit in the new background
+            out_of_bounds = self._validate_empire_elements_fit_background(pixmap)
+            if out_of_bounds:
+                if not self._show_elements_wont_fit_dialog(out_of_bounds):
+                    return  # User cancelled
+            
             self.state.selected_empire_image = pixmap
             # For PIL images, we don't have a file path unless it was loaded from _load_and_validate_empire_map
     
@@ -2948,6 +3160,10 @@ class MainWindow(QMainWindow):
         # Repopulate Default Cities menu
         self.populate_default_cities_menu()
         
+        # Update empire map info with new background details
+        image_path = getattr(self, '_current_image_path', None) if open_dialog else None
+        self._update_empire_map_info(image_path=image_path, pixmap=pixmap)
+        
         # Re-render empire elements if they exist
         if self.state.current_empire_object:
             empire = self.state.current_empire_object
@@ -2966,7 +3182,7 @@ class MainWindow(QMainWindow):
     def on_new_empire(self):
         """Handle the New Empire action by showing the image selection dialog."""
         # Check if we have unsaved changes
-        if not self._check_before_discarding():
+        if not self._check_before_discarding("new"):
             return
         dialog = ImageSelectionDialog(self)
         
@@ -2974,15 +3190,21 @@ class MainWindow(QMainWindow):
             selected_image = dialog.get_selected_image()
             selected_type = dialog.get_selected_image_type()
             if selected_image:
-                # Clear current empire data and set new background
-                self.clear_empire_data()
-                
-                # Load image as QPixmap directly (same as working set_background_image)
+                # Load image as QPixmap to validate
                 pixmap = QPixmap(selected_image)
                 if pixmap.isNull():
                     QMessageBox.warning(self, "Invalid Image", 
                                        f"Could not load image file:\n{selected_image}")
                     return
+                
+                # Clear current empire data and set new background
+                self.clear_empire_data()
+                
+                # Create a new clean empire first
+                self.state.new_empire()
+                
+                # Store the current image path for later use
+                self._current_image_path = selected_image
                 
                 # Store the pixmap and set background (same as working method)
                 self.state.selected_empire_image = pixmap
@@ -3002,13 +3224,31 @@ class MainWindow(QMainWindow):
                 self.ui.graphicsView.setEnabled(True)
                 self.remove_no_background_message()
                 
+                # Now update the empire with proper map info for custom backgrounds
+                if selected_type == ed.EmpBackgroundTypes.CUSTOM:
+                    # Upgrade to version 2 and set map info
+                    self.state.current_empire_object.version = 2
+                    self.state.current_empire_object.map_info = ed.Map(
+                        image=os.path.basename(selected_image),  # Just the filename
+                        width=pixmap.width(),
+                        height=pixmap.height(),
+                        x_offset=0,
+                        y_offset=0,
+                        coordinates_relative=False,
+                        coordinates_x_offset=0,
+                        coordinates_y_offset=0
+                    )
+                    self.state.current_empire_object.show_ireland = False  # Default setting for custom images
+                else:
+                    # For legacy backgrounds, keep version 1 and default show_ireland
+                    self.state.current_empire_object.show_ireland = True
+                
                 # Repopulate Default Cities menu for new background
                 self.populate_default_cities_menu()
                 
                 # Update window title to indicate new file
                 self.setWindowTitle("Empire Editor - New Empire")
-                self.state.new_empire()  # Create a new empire object
-                self.state.current_empire_object.show_ireland = False  # Default setting for custom images
+                self.state.current_empire_object.show_ireland = False
                 # Update UI state after creating new empire
                 self.update_ui_state()
                 
@@ -3131,7 +3371,19 @@ class MainWindow(QMainWindow):
         """
         # Ensure there's an empire
         if not self.state.check_if_empire():
+            # Create empire and update with current background info if available
             self.state.new_empire()
+            if self.bg_item and hasattr(self, '_current_image_path'):
+                # Update with current background information
+                pixmap = self.bg_item.pixmap()
+                if self.bg_type == ed.EmpBackgroundTypes.CUSTOM:
+                    self.state.current_empire_object.version = 2
+                    self.state.current_empire_object.map_info = ed.Map(
+                        image=os.path.basename(self._current_image_path),
+                        width=pixmap.width(),
+                        height=pixmap.height()
+                    )
+                    self.state.current_empire_object.show_ireland = False
         empire = self.state.current_empire_object
         
         # Add to empire cities list if not already there or if forced
@@ -3558,7 +3810,61 @@ class MainWindow(QMainWindow):
             ed.EmpBackgroundTypes.SOUTH_MAP
         ]
         
-        self.ui.menuDefaultCities.setEnabled(should_enable)  
+        self.ui.menuDefaultCities.setEnabled(should_enable)
+        
+        # If enabled, sync the menu state with loaded cities
+        if should_enable:
+            self._sync_default_cities_menu_with_loaded_empire()
+
+    def _sync_default_cities_menu_with_loaded_empire(self):
+        """Sync the default cities menu checkboxes with cities already loaded in the empire."""
+        if not self.state.current_empire_object or not hasattr(self.state.current_empire_object, 'cities'):
+            return
+            
+        if not hasattr(self, 'cities_data') or not hasattr(self, 'city_actions'):
+            return
+            
+        current_map_name = self._get_current_map_name()
+        if not current_map_name or current_map_name == ed.EmpBackgroundTypes.CUSTOM:
+            return
+            
+        # Get all cities currently in the empire
+        loaded_cities = self.state.current_empire_object.cities
+        
+        # Clear all checkboxes first
+        for region_name, region_city_actions in self.city_actions.items():
+            for action in region_city_actions:
+                action.setChecked(False)
+        
+        # Check cities that match default city positions
+        for loaded_city in loaded_cities:
+            # Try to find this city in the default cities data
+            for region_name, cities in self.cities_data.items():
+                for city_name, city_data in cities.items():
+                    map_data = city_data.get("default_map", {}).get(current_map_name)
+                    if map_data:
+                        expected_x = map_data.get("x")
+                        expected_y = map_data.get("y")
+                        
+                        # Check if the loaded city matches this default city position (within tolerance)
+                        if (expected_x is not None and expected_y is not None and
+                            abs(loaded_city.x - expected_x) <= 5 and  # 5 pixel tolerance
+                            abs(loaded_city.y - expected_y) <= 5):
+                            
+                            # Find the corresponding action and check it
+                            if region_name in self.city_actions:
+                                for action in self.city_actions[region_name]:
+                                    if action.text() == city_name:
+                                        action.setChecked(True)
+                                        break
+                            break
+        
+        # Update the "Select All" states for each region
+        for region_name in self.region_actions:
+            self._update_region_select_all_state(region_name)
+        
+        # Update the main "Add all" state
+        self._update_main_select_all_state()  
 
     def _city_fits_on_current_background(self, x, y):
         """Check if city coordinates fit within current background image bounds."""
@@ -3663,6 +3969,16 @@ class MainWindow(QMainWindow):
                 print(f"Invalid coordinates for {city_name}: x={x}, y={y}")
                 return
             
+            # Check if city already exists at this location to avoid duplicates
+            if self.state.check_if_empire():
+                empire = self.state.current_empire_object
+                for existing_city in empire.cities:
+                    if (existing_city.name == city_name and 
+                        abs(existing_city.x - x) <= 2 and abs(existing_city.y - y) <= 2):
+                        # City already exists at this location, don't add duplicate
+                        print(f"City {city_name} already exists at ({x}, {y})")
+                        return
+            
             # Create a city object and map the type from JSON
             city = ed.City(city_name, x, y)
             # Map JSON type string to CityType enum
@@ -3690,9 +4006,33 @@ class MainWindow(QMainWindow):
                 return
             
             empire = self.state.current_empire_object
+            current_map_name = self._get_current_map_name()
             
-            # Find and remove the city
-            cities_to_remove = [city for city in empire.cities if city.name == city_name]
+            # Get expected coordinates for this default city
+            expected_coords = None
+            if hasattr(self, 'cities_data') and current_map_name:
+                city_data = self.cities_data.get(region_name, {}).get(city_name, {})
+                map_data = city_data.get("default_map", {}).get(current_map_name, {})
+                if map_data:
+                    expected_x = map_data.get("x")
+                    expected_y = map_data.get("y")
+                    if expected_x is not None and expected_y is not None:
+                        expected_coords = (expected_x, expected_y)
+            
+            # Find and remove cities that match the name and location (if known)
+            cities_to_remove = []
+            for city in empire.cities:
+                if city.name == city_name:
+                    # If we know the expected coordinates, only remove cities at that location
+                    if expected_coords:
+                        expected_x, expected_y = expected_coords
+                        if abs(city.x - expected_x) <= 5 and abs(city.y - expected_y) <= 5:
+                            cities_to_remove.append(city)
+                    else:
+                        # If we don't know expected coordinates, remove all cities with this name
+                        cities_to_remove.append(city)
+            
+            # Remove the identified cities
             for city in cities_to_remove:
                 empire.cities.remove(city)
                 self._remove_city_marker(city)
@@ -3709,7 +4049,8 @@ class MainWindow(QMainWindow):
                     except (RuntimeError, KeyError):
                         pass
             
-            print(f"Removed {city_name}")
+            if cities_to_remove:
+                print(f"Removed {len(cities_to_remove)} instance(s) of {city_name}")
             
         except Exception as e:
             print(f"Error removing city {city_name}: {e}")
