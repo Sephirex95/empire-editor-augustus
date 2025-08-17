@@ -63,6 +63,29 @@ class ProgramState:
         self.load_images()
         return not self.init_failed
 
+    def _create_my_empires_folder(self, settings):
+        """Helper function to create my_empires folder and set default_save_folder setting."""
+        # Determine the correct application root directory
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller executable - use the directory containing the .exe
+            app_root = os.path.dirname(sys.executable)
+        else:
+            # Running in normal Python environment
+            app_root = os.path.dirname(os.path.abspath(__file__))
+        
+        my_empires_folder = os.path.join(app_root, "my_empires")
+        
+        try:
+            os.makedirs(my_empires_folder, exist_ok=True)
+            settings.setValue("default_save_folder", my_empires_folder)
+            print(f"Created my_empires folder at: {my_empires_folder}")
+            return True
+        except OSError as e:
+            print(f"Could not create my_empires folder: {e}")
+            # Fall back to application root as default save folder
+            settings.setValue("default_save_folder", app_root)
+            return False
+
     def load_c3_folder(self):
         config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
         settings = QSettings(config_path, QSettings.Format.IniFormat)
@@ -86,18 +109,8 @@ class ProgramState:
                 settings.setValue("c3_main_folder", folder)
                 self.c3_main_path = folder
                 
-                # Create 'my_empires' folder in the application root directory
-                app_root = os.path.dirname(os.path.abspath(__file__))
-                my_empires_folder = os.path.join(app_root, "my_empires")
-                
-                try:
-                    os.makedirs(my_empires_folder, exist_ok=True)
-                    settings.setValue("default_save_folder", my_empires_folder)
-                    print(f"Created my_empires folder at: {my_empires_folder}")
-                except OSError as e:
-                    print(f"Could not create my_empires folder: {e}")
-                    # Fall back to application root as default save folder
-                    settings.setValue("default_save_folder", app_root)
+                # Create 'my_empires' folder using helper function
+                self._create_my_empires_folder(settings)
                 
                 return True
             else:
@@ -107,25 +120,16 @@ class ProgramState:
                 return False
         else:
             # C3 folder is already configured, but check if my_empires folder and setting exist
-            app_root = os.path.dirname(os.path.abspath(__file__))
-            my_empires_folder = os.path.join(app_root, "my_empires")
             default_save_folder = settings.value("default_save_folder", type=str)
             
-            # Create my_empires folder if it doesn't exist
-            if not os.path.exists(my_empires_folder):
-                try:
-                    os.makedirs(my_empires_folder, exist_ok=True)
-                    print(f"Created my_empires folder at: {my_empires_folder}")
-                except OSError as e:
-                    print(f"Could not create my_empires folder: {e}")
-            
-            # Set default_save_folder setting if not already set
+            # Create my_empires folder if it doesn't exist or setting is missing
             if not default_save_folder:
-                if os.path.exists(my_empires_folder):
-                    settings.setValue("default_save_folder", my_empires_folder)
-                else:
-                    settings.setValue("default_save_folder", app_root)
-                print(f"Set default save folder to: {settings.value('default_save_folder')}")
+                self._create_my_empires_folder(settings)
+            else:
+                # Check if the existing path is valid and exists
+                if not os.path.exists(default_save_folder):
+                    print(f"Default save folder {default_save_folder} no longer exists, recreating...")
+                    self._create_my_empires_folder(settings)
         
         return True
 
