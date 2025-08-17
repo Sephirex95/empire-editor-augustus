@@ -8,13 +8,13 @@ Created on Sun Aug 10 22:02:04 2025
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QWidget, QHBoxLayout,
-    QComboBox, QSpinBox, QStyleFactory, QAbstractItemView, QApplication
+    QComboBox, QSpinBox, QAbstractItemView, QApplication
 )
-from PySide6.QtGui import QPalette
+
 from edit_city import Ui_Dialog # <-- your generated file/class name
 from empire_data import (
     ResourceType, CityType, TradeRoute,
-    Resource, TradePoint, City, TradeRouteType
+    Resource, City, TradeRouteType
 )
 
 import sys

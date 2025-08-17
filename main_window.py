@@ -4,19 +4,17 @@ import json
 import shutil
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QGraphicsScene, QGraphicsView,
-    QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox,
-    QLabel, QDialog, QWidget, QGraphicsEllipseItem, QGraphicsLineItem,
-    QGraphicsItemGroup,  QGraphicsItem,  QMenu, QMenuBar
+    QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox, QDialog, QGraphicsLineItem,
+    QGraphicsItemGroup,  QGraphicsItem,  QMenu, QMenuBar, QGraphicsTextItem, QGraphicsRectItem
 
 )
-from PySide6.QtGui import QIcon, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor
-from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QPoint, QRectF, QSizeF, QPointF, QTimer
-from sg_reader import SgFileReader
+from PySide6.QtGui import QIcon,QFont, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor
+from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QRectF, QSizeF, QTimer
+from sg_reader_light import SgFileReader
 from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog
 from PIL import Image
 import empire_data as ed
 import edit_city_logic as emp_dlg
-from math import hypot
 from enum import Enum, auto
 import copy
 
@@ -71,6 +69,13 @@ class ProgramState:
         self.c3_main_path = settings.value("c3_main_folder", type=str)
 
         if not self.c3_main_path:
+            QMessageBox.information(
+                None,
+                "Select Caesar 3 Folder",
+                "Please select your Caesar 3 installation folder.\n\n"
+                "This should be the folder that contains C3.sg2 and augustus.exe files.",
+                QMessageBox.StandardButton.Ok
+            )
             folder = QFileDialog.getExistingDirectory(
                 None,
                 "Select Caesar 3 Main Directory",
@@ -236,16 +241,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
-        
-
-        
         # Set window icon
-        import os
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "editor.ico")
         if os.path.exists(icon_path):
-            from PySide6.QtGui import QIcon
-            self.setWindowIcon(QIcon(icon_path))
-        
+            icon = QIcon(icon_path)
+            self.setWindowIcon(icon)
+            # Also set application icon (for taskbar grouping)
+            QApplication.instance().setWindowIcon(icon)
+
+
+
         self.no_bg_item = None
         self.bg_item = None  # the background QGraphicsPixmapItem
         self.bg_type = ed.EmpBackgroundTypes.NONE  # type of background currently set
@@ -816,7 +821,6 @@ class MainWindow(QMainWindow):
             
             # Load and validate the image
             try:
-                from PIL import Image
                 pil_image = Image.open(found_image_path)
                 image_width, image_height = pil_image.size
                 
@@ -1695,7 +1699,6 @@ class MainWindow(QMainWindow):
         
         # Check if all cities are checked
         all_checked = all(action.isChecked() for action in city_actions)
-        any_checked = any(action.isChecked() for action in city_actions)
         
         # Update the region action state
         region_action.setChecked(all_checked)
@@ -2861,7 +2864,7 @@ class MainWindow(QMainWindow):
                 self._remove_city_marker(city)
                 
                 # Store old position for comparison
-                old_x, old_y = city.x, city.y
+                #old_x, old_y = city.x, city.y
                 
                 # If this is "Our City", find all trade routes that end at it BEFORE moving
                 affected_cities = []
@@ -3307,7 +3310,6 @@ class MainWindow(QMainWindow):
             # Ensure empire has a border object for border spacing
             if not hasattr(empire, 'border') or empire.border is None:
                 # Create a new Border object
-                import empire_data as ed
                 empire.border = ed.Border(density=border_spacing)
             else:
                 # Update existing border object
@@ -3315,7 +3317,6 @@ class MainWindow(QMainWindow):
                     empire.border.density = border_spacing
                 # If it's just a number, replace with proper Border object
                 elif isinstance(empire.border, (int, float)):
-                    import empire_data as ed
                     empire.border = ed.Border(density=border_spacing)
             
             # Save show_ireland to empire object
@@ -3470,9 +3471,6 @@ class MainWindow(QMainWindow):
             del self.city_name_labels[key]
         
         # Create text item with white background
-        from PySide6.QtWidgets import QGraphicsTextItem, QGraphicsRectItem
-        from PySide6.QtGui import QFont, QBrush, QPen
-        from PySide6.QtCore import Qt
         
         # Create text item
         text_item = QGraphicsTextItem(city.name)
@@ -3689,13 +3687,27 @@ class MainWindow(QMainWindow):
         self.populate_default_cities_menu()
         
         print("Map refresh completed")
-
+    def get_resource_path(self, relative_path):
+        """Get absolute path to resource, works for dev and for PyInstaller bundle."""
+        try:
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            base_path = sys._MEIPASS
+        except AttributeError:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        return os.path.join(base_path, relative_path)
     def populate_default_cities_menu(self):
         """Populate the Default Cities menu with hierarchical regions and cities from JSON."""
         try:
-            # Load the JSON file
-            json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                   "augustus_assets", "Areldir_maps", "cities_grouped.json")
+            # Handle PyInstaller bundle paths
+            if getattr(sys, 'frozen', False):
+                # Running in PyInstaller bundle
+                base_path = sys._MEIPASS
+            else:
+                # Running in normal Python environment
+                base_path = os.path.dirname(os.path.abspath(__file__))
+                
+            json_path = os.path.join(base_path, "augustus_assets", "Areldir_maps", "cities_grouped.json")
             
             if not os.path.exists(json_path):
                 print(f"Cities JSON file not found: {json_path}")
@@ -3721,7 +3733,7 @@ class MainWindow(QMainWindow):
                 self.ui.menuDefaultCities.addAction(no_bg_action)
                 return
             
-            select_all_regions_action = QAction(f"Add all", self)
+            select_all_regions_action = QAction("Add all", self)
             select_all_regions_action.setCheckable(True)
             
             # Create region menus with cities
@@ -3886,11 +3898,7 @@ class MainWindow(QMainWindow):
         margin = 50  # Allow some margin for city icon
         return (x >= 0 and x < bg_width - margin and 
                 y >= 0 and y < bg_height - margin)
-        
-    def on_select_all_regions(self, checked):
-        """Handle 'Add all' checkbox for all regions."""
-        for region_name in self.region_actions:
-            self.on_region_select_all(region_name, checked)
+
     
     def on_select_all_regions(self, checked):
         """Handle the top-level "Add all" checkbox that selects/deselects all regions and cities."""
@@ -3921,7 +3929,7 @@ class MainWindow(QMainWindow):
             
             # Check if all cities are selected
             all_selected = all(action.isChecked() for action in city_actions)
-            any_selected = any(action.isChecked() for action in city_actions)
+            #any_selected = any(action.isChecked() for action in city_actions)
             
             # Update region action state
             region_action.setChecked(all_selected)
@@ -4059,12 +4067,8 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------
 
 
-    def closeEvent(self, event):
-        QApplication.quit()
-        event.accept()
-
-
 if __name__ == "__main__":
+    
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     # One global filter to observe ALL widgets
