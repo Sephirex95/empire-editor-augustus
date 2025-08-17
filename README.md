@@ -16,6 +16,9 @@ A visual tool for creating and editing *Empire* maps and trade data for the [Aug
 - main_window.py is in dire need of a refactor, the code is massive (4k+ lines). There's a lot of duplicated methods and unnecessary checks, which I'll try to remove to be easier to maintain.
 
 ---
+## Screenshots:
+<img width="2397" height="1186" alt="ss1_emp_editor" src="https://github.com/user-attachments/assets/7f1d646e-782c-4f94-a28b-e2bd19671aa8" />
+<img width="2390" height="1181" alt="ss2_emp_editor" src="https://github.com/user-attachments/assets/a2565806-9dcf-4a81-b429-b8f9410a92e7" />
 
 ## Releases
 
