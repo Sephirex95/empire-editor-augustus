@@ -1,13 +1,15 @@
 # ui_empire_editor.py
 import os
+import sys
+from pathlib import Path
 import empire_data as ed
 from PySide6.QtCore import Qt, QCoreApplication, QSize
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QWidget, QListWidget, QGraphicsView,
     QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout, QLabel,
     QDialog, QVBoxLayout, QPushButton, QListWidgetItem, QFileDialog,
-    QMessageBox, QSpinBox, QCheckBox
+    QMessageBox, QSpinBox, QCheckBox, QDialogButtonBox
 )
 
 class EmpireMapView(QGraphicsView):
@@ -108,6 +110,7 @@ class Ui_MainWindow(object):
         self.menuDefaultCities = QMenu(self.menubar); self.menuDefaultCities.setObjectName("menuDefaultCities")
         self.menuView = QMenu(self.menubar); self.menuView.setObjectName("menuView")
         self.menuSettings = QMenu(self.menubar); self.menuSettings.setObjectName("menuSettings")
+        self.menuSettings.setEnabled(False)  # Disabled by default
         self.menuHelp = QMenu(self.menubar); self.menuHelp.setObjectName("menuHelp")
         self.menuGitHub = QMenu(self.menuHelp); self.menuGitHub.setObjectName("menuGitHub")
 
@@ -156,7 +159,6 @@ class Ui_MainWindow(object):
 
         # No auto-connects here (we're wiring in main_window.py)
         self.retranslateUi(MainWindow)
-
     def retranslateUi(self, MainWindow):
         _t = QCoreApplication.translate
         MainWindow.setWindowTitle(_t("MainWindow", "Empire Editor", None))
@@ -543,3 +545,84 @@ class EmpirePropertiesDialog(QDialog):
         """Cancel dialog and restore original values."""
         self.restore_original_values()
         self.reject()
+
+
+def _find_editor_icon() -> Path | None:
+    """Try _internal/editor.ico (PyInstaller), then local fallbacks."""
+    base = Path(getattr(sys, "_MEIPASS", Path(sys.argv[0]).resolve().parent))
+    candidates = [
+        base / "_internal" / "editor.ico",  # PyInstaller onedir with contents_directory
+        base / "editor.ico",
+        Path("editor.ico"),
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    return None
+
+
+def show_about_dialog(parent=None):
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("About Empire Editor")
+    dlg.setModal(True)
+    dlg.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+
+    icon_path = _find_editor_icon()
+    if icon_path:
+        dlg.setWindowIcon(QIcon(str(icon_path)))        # Layout: icon on the left, rich text on the right
+        layout = QVBoxLayout(dlg)
+        top = QHBoxLayout()
+        layout.addLayout(top)
+
+        # Icon preview (optional)
+        if icon_path:
+            icon_lbl = QLabel(dlg)
+            pm = QPixmap(str(icon_path))
+            if not pm.isNull():
+                # scale to a nice size; keeps aspect ratio
+                pm = pm.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                icon_lbl.setPixmap(pm)
+            icon_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            top.addWidget(icon_lbl)
+
+        # Rich text
+        text_lbl = QLabel(dlg)
+        text_lbl.setTextFormat(Qt.RichText)
+        text_lbl.setOpenExternalLinks(True)
+        text_lbl.setWordWrap(True)
+        text_lbl.setText(
+            """<b>Empire Editor for Augustus</b> by <b>Sephirex95</b><br>
+            <a href="https://github.com/Sephirex95/empire-editor-augustus">
+            https://github.com/Sephirex95/empire-editor-augustus</a><br><br>
+
+            Sgreader code is a Python conversion of the citybuilding tools by <b>Bianca 'bvschaik' van Schaik</b>, author 
+            of <a href="https://github.com/bvschaik/julius">Julius</a> and founder of the community:<br>
+            <a href="https://github.com/bvschaik/citybuilding-tools">https://github.com/bvschaik/citybuilding-tools</a><br><br>
+
+            Enormous thanks to <b>Areldir</b> for making and generously sharing the beautiful Empire maps used in this editor.<br><br>
+
+            Vanilla assets extracted at runtime from <i>Caesar III</i> by Impressions Games,
+            published by Sierra Studios (Activision).<br><br>
+
+            Huge thanks also to <b>Destinationwalker</b>, <b>CommissarMarek</b> and <b>Turgon</b>
+            who consulted on the usage of the XML logic, and PrettyFlower who authored the original code for custom empires.<br><br>
+            
+            Finally a big thank you to the entire Augustus community and dev team for their support and contributions, big and small.<br><br>
+            
+            Made using <b>PySide6</b> (Qt for Python). PySide6 and Qt are available under the
+            <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a>.<br>
+            &copy; The Qt Company Ltd and other contributors. License texts and source:
+            <a href="https://code.qt.io/pyside/pyside-setup">code.qt.io/pyside/pyside-setup</a>,
+            <a href="https://www.qt.io/terms-conditions/license/">qt.io/terms-conditions/license/</a>.<br>
+            This application dynamically links to PySide6/Qt. Under the LGPL v3, you may replace or
+            relink those libraries with a modified version; reverse engineering is permitted for
+            debugging such modifications."""
+        )
+        top.addWidget(text_lbl, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok, parent=dlg)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+
+        dlg.resize(580, 380)
+        dlg.exec()

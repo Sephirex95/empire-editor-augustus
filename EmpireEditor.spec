@@ -1,9 +1,7 @@
-# EmpireEditor.spec
 # -*- mode: python ; coding: utf-8 -*-
 
 import inspect
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
-from PyInstaller.building.datastruct import Tree
 
 app_name   = "EmpireEditor"
 entry_file = "main_window.py"
@@ -18,11 +16,12 @@ excludes = [
     "mkl_service",
 ]
 
-# Put editor.ico inside _internal so your app can load it at runtime.
+# With contents_directory="_internal", destination "." means "_internal/"
+# and "augustus_assets" means "_internal/augustus_assets/"
 datas = [
-    ('editor.ico', '.'),
-    ('augustus_assets', 'augustus_assets')
-	]
+    (icon_file, "."),                 # -> _internal/editor.ico
+    ("augustus_assets", "augustus_assets"),  # -> _internal/augustus_assets/ (recursive)
+]
 
 block_cipher = None
 
@@ -51,33 +50,25 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,        # windowed app
-    icon=icon_file,       # EXE icon in Explorer
+    console=False,      # windowed app
+    icon=icon_file,     # Explorer icon
 )
 
-# Use contents_directory if available (PyInstaller ≥ 6.3) so deps go under _internal/
 collect_kwargs = dict(
     strip=False,
     upx=False,
     upx_exclude=[],
     name=app_name,
 )
-supports_contents_dir = "contents_directory" in inspect.signature(COLLECT).parameters
-if supports_contents_dir:
-    collect_kwargs["contents_directory"] = "_internal"
 
-# IMPORTANT: With contents_directory, do NOT prefix Tree with "_internal/..."
-# We want _internal/augustus_assets, not _internal/_internal/augustus_assets
-assets_tree = Tree(
-    "augustus_assets",
-    prefix=("augustus_assets" if supports_contents_dir else "_internal/augustus_assets")
-)
+# Put everything under _internal/ (PyInstaller >= 6.3)
+if "contents_directory" in inspect.signature(COLLECT).parameters:
+    collect_kwargs["contents_directory"] = "_internal"
 
 coll = COLLECT(
     exe,
     a.binaries,
     a.zipfiles,
     a.datas,
-    assets_tree,
     **collect_kwargs
 )

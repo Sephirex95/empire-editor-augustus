@@ -6,6 +6,11 @@ import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 
+# Global header comment for exported files
+EMPIRE_EDITOR_HEADER = """Made with EmpireEditor for Augustus by Sephirex95
+https://github.com/Sephirex95/empire-editor-augustus
+Empire maps made and generously shared by Areldir"""
+
 
 # ---------- Enums map 1:1 to XML attribute values ----------
 
@@ -291,6 +296,10 @@ class Empire:
                     r_el.set("type", ResourceType(r.resource_type).value)
                     if not omit_amount and r.amount not in (None, 1):
                         r_el.set("amount", str(r.amount))
+        
+        # Ensure cities element is never self-closing by adding text content
+        if not self.cities:
+            cities_el.text = "\n    "
 
         if self.invasion_paths:
             inv_el = SubElement(root, "invasion_paths")
@@ -332,6 +341,14 @@ class Empire:
             parts.append("<?xml version=\"1.0\"?>")
         if include_doctype:
             parts.append("<!DOCTYPE empire>")
+        
+        # Add the header comment
+        comment_lines = EMPIRE_EDITOR_HEADER.strip().split('\n')
+        parts.append("<!--")
+        for line in comment_lines:
+            parts.append(f"  {line}")
+        parts.append("-->")
+        
         parts.append(body)
         return "\n".join(parts)
 

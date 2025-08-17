@@ -8,10 +8,10 @@ from PySide6.QtWidgets import (
     QGraphicsItemGroup,  QGraphicsItem,  QMenu, QMenuBar, QGraphicsTextItem, QGraphicsRectItem
 
 )
-from PySide6.QtGui import QIcon,QFont, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor
-from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QRectF, QSizeF, QTimer
+from PySide6.QtGui import QIcon,QFont, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor, QDesktopServices
+from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QRectF, QSizeF, QTimer, QUrl
 from sg_reader_light import SgFileReader
-from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog
+from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog, show_about_dialog
 from PIL import Image
 import empire_data as ed
 import edit_city_logic as emp_dlg
@@ -285,8 +285,6 @@ class MainWindow(QMainWindow):
             # Also set application icon (for taskbar grouping)
             QApplication.instance().setWindowIcon(icon)
 
-
-
         self.no_bg_item = None
         self.bg_item = None  # the background QGraphicsPixmapItem
         self.bg_type = ed.EmpBackgroundTypes.NONE  # type of background currently set
@@ -348,6 +346,10 @@ class MainWindow(QMainWindow):
         if not self.state.init():
             self.init_failed = True
             return
+        
+        # File state tracking for title bar
+        self.current_file_path = None  # Path to currently open file
+        self.has_unsaved_changes = False  # Track if there are unsaved changes
 
         # Initialize cursor pixmaps once at startup
         self._init_cursor_pixmaps()
@@ -380,6 +382,9 @@ class MainWindow(QMainWindow):
         self.ui.actionViewOption4.triggered.connect(self.toggle_name_labels_visibility)
         self.ui.actionRefreshMap.triggered.connect(self.refresh_map)
         
+        # Connect help menu
+        self.ui.actionAbout.triggered.connect(lambda: show_about_dialog(self))
+        
         self.ui.listWidget.itemClicked.connect(self.on_item_clicked)
             # Populate Default Cities menu
         self.populate_default_cities_menu()
@@ -394,6 +399,23 @@ class MainWindow(QMainWindow):
         self.selected_kind = None        # can be EmpCityTypes or EmpObjTypes
         self.is_dragging = False
         self._init_context_menus()
+        self.ui.actionGitHub_Augustus.triggered.connect(self.open_github_augustus)
+        self.ui.actionGitHub_Editor.triggered.connect(self.open_github_editor)
+        self.ui.actionGitHub_Custom.triggered.connect(self.open_github_custom)
+        # Set initial window title
+        self.update_window_title()
+
+    def open_github_augustus(self):
+        url = "https://github.com/Keriew/augustus/tree/master?tab=readme-ov-file"  # Replace with actual Augustus GitHub URL
+        QDesktopServices.openUrl(QUrl(url))
+
+    def open_github_editor(self):
+        url = "https://github.com/Sephirex95/empire-editor-augustus"  
+        QDesktopServices.openUrl(QUrl(url))
+
+    def open_github_custom(self):
+        url = "https://github.com/Keriew/augustus/discussions/734"  
+        QDesktopServices.openUrl(QUrl(url))
 
     def _init_context_menus(self):
         city_common_menu = [
@@ -474,7 +496,8 @@ class MainWindow(QMainWindow):
         """
         if not (self.state.check_if_empire() and self.state.has_any_data()):
             return True
-            
+        if not self.has_unsaved_changes:
+            return True    
         context_info = {
             "load": ("Load Empire", "You have unsaved work in the current empire.\nYou will lose your progress, continue?"),
             "new": ("New Empire", "You have unsaved work in the current empire.\nYou will lose your progress, continue?"),
@@ -493,6 +516,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event to prevent unsaved data loss."""
+
         if self._check_before_discarding("close"):
             event.accept()
         else:
@@ -628,6 +652,11 @@ class MainWindow(QMainWindow):
             # Update UI state after loading empire
             self.update_ui_state()
             
+            # Update file state and window title
+            self.current_file_path = file_path
+            self.has_unsaved_changes = False
+            self.update_window_title()
+            
             QMessageBox.information(
                 self, "Success", f"Empire loaded from {file_path}",
                 QMessageBox.StandardButton.Ok
@@ -646,6 +675,15 @@ class MainWindow(QMainWindow):
 
     def save_empire_xml(self):
         """Save current empire to XML file."""
+        our_city_exists, _ = self.state.has_our_city()
+        if not our_city_exists:
+            QMessageBox.warning(
+                self, "Our City", "'Our City' is not set, the empire can function incorrectly.\n are you sure you want to save?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if QMessageBox.StandardButton.No:
+                return
         if not self.state.check_if_empire():
             QMessageBox.warning(
                 self, "No Empire", "No empire to save. Create an empire first.",
@@ -684,6 +722,11 @@ class MainWindow(QMainWindow):
             self._prepare_empire_map_info_for_save(empire, file_path)
             
             empire.write_xml(file_path)
+            
+            # Update file state and window title
+            self.current_file_path = file_path
+            self.has_unsaved_changes = False
+            self.update_window_title()
             
             QMessageBox.information(
                 self, "Success", f"Empire saved to {file_path}",
@@ -1099,6 +1142,7 @@ class MainWindow(QMainWindow):
                     self.clear_trade_route_selection_overlay()
                 # Clear only the plotted path, keep the trade route object
                 city.trade_route.trade_points.clear()
+                self.mark_unsaved_changes()  # Mark as unsaved after deleting trade route
                 self.clear_trade_route_visuals(city_index)
                 return True
         else:
@@ -1168,6 +1212,34 @@ class MainWindow(QMainWindow):
                 for w in widgets: 
                     try: w.unsetCursor()
                     except: pass
+
+    def update_window_title(self):
+        """Update the window title to show current file and unsaved changes status."""
+        base_title = "Empire Editor"
+        
+        if self.current_file_path:
+            filename = os.path.basename(self.current_file_path)
+            title = f"{filename} - {base_title}"
+        else:
+            title = f"New Empire - {base_title}"
+        
+        if self.has_unsaved_changes:
+            title = f"*{title}"
+        
+        self.setWindowTitle(title)
+
+    def mark_unsaved_changes(self):
+        """Mark that the empire has unsaved changes and update the title."""
+        if not self.has_unsaved_changes:
+            self.has_unsaved_changes = True
+            self.update_window_title()
+
+    def mark_saved(self):
+        """Mark that all changes have been saved and update the title."""
+        if self.has_unsaved_changes:
+            self.has_unsaved_changes = False
+            self.update_window_title()
+
 # %% GLOBAL EVENT FILTER
     def eventFilter(self, obj, event):
         et = event.type()
@@ -1706,6 +1778,7 @@ class MainWindow(QMainWindow):
             if city_index is not None:
                 self.clear_trade_route_visuals(city_index)
             empire.cities.remove(city)
+            self.mark_unsaved_changes()  # Mark as unsaved after removing city
         self._remove_city_marker(city)
         if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == EmpCityTypes.OUR:
             self.deselect_item()
@@ -1878,6 +1951,7 @@ class MainWindow(QMainWindow):
                 city.trade_route.r_type = ttype
                 city.trade_route.trade_points = pts
             
+            self.mark_unsaved_changes()  # Mark as unsaved after creating/updating trade route
             self._abort_trade_drawing()
             self.render_trade_route(city)
         else:
@@ -2253,6 +2327,7 @@ class MainWindow(QMainWindow):
                 # Update the trade point
                 city.trade_route.trade_points[self.editing_vertex_index].x = int(x)
                 city.trade_route.trade_points[self.editing_vertex_index].y = int(y)
+                self.mark_unsaved_changes()  # Mark as unsaved after modifying trade route
                 # Re-render the trade route
                 self.render_trade_route(city)
                 # Recreate vertex handles with new positions
@@ -2266,6 +2341,7 @@ class MainWindow(QMainWindow):
                 # Update the border edge
                 empire.border.edges[self.editing_vertex_index].x = int(x)
                 empire.border.edges[self.editing_vertex_index].y = int(y)
+                self.mark_unsaved_changes()  # Mark as unsaved after modifying border
                 # Re-render the empire border
                 self.render_empire_border()
                 # Recreate vertex handles with new positions
@@ -2631,6 +2707,7 @@ class MainWindow(QMainWindow):
             edges = [ed.Edge(x=int(x), y=int(y), hidden=False) for (x, y) in points_img_xy]
             border_obj = ed.Border(density=int(density), edges=edges)
             empire.border = border_obj  # single border only
+            self.mark_unsaved_changes()  # Mark as unsaved after creating border
         except Exception:
             # Fallback if dataclasses not available for some reason
             border_obj = type("Border", (), {})()
@@ -3299,7 +3376,9 @@ class MainWindow(QMainWindow):
                 self.populate_default_cities_menu()
                 
                 # Update window title to indicate new file
-                self.setWindowTitle("Empire Editor - New Empire")
+                self.current_file_path = None
+                self.has_unsaved_changes = False
+                self.update_window_title()
                 self.state.current_empire_object.show_ireland = False
                 # Update UI state after creating new empire
                 self.update_ui_state()
@@ -3439,6 +3518,7 @@ class MainWindow(QMainWindow):
         # Add to empire cities list if not already there or if forced
         if force_add or city not in empire.cities:
             empire.cities.append(city)
+            self.mark_unsaved_changes()  # Mark as unsaved after adding city
         
         # Place visual marker on scene
         self._place_city_on_scene(city)
@@ -3473,6 +3553,7 @@ class MainWindow(QMainWindow):
                 self._remove_city_marker(ours)
                 # Store center coordinates in city data
                 ours.x, ours.y = x, y
+                self.mark_unsaved_changes()  # Mark as unsaved after moving city
                 # Use unified method to re-add the moved city
                 self._add_city_to_empire(ours, force_add=False)
                 return
