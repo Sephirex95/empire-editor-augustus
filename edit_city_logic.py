@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox, QSpinBox, QAbstractItemView, QApplication
 )
 
-from edit_city import Ui_Dialog # <-- your generated file/class name
+from edit_city import Ui_Dialog
 from empire_data import (
     ResourceType, CityType, TradeRoute,
     Resource, City, TradeRouteType
@@ -29,18 +29,12 @@ def enum_strings(enum_cls):
     return items
 
 def to_city_type(text: str) -> CityType | None:
-    """Map translated/pretty UI labels to CityType (case-insensitive)."""
-    if not text:
+    """Case-insensitive conversion to CityType enum."""
+    try:
+        return CityType(text.strip().lower())
+    except ValueError:
         return None
-    key = text.strip().lower()
-    mapping = {
-        "ours": CityType.OURS,
-        "trade": CityType.TRADE,
-        "roman": CityType.ROMAN,
-        "distant": CityType.DISTANT,
-        "vulnerable": CityType.VULNERABLE,
-    }
-    return mapping.get(key)
+
 
 def enum_text(e) -> str:
     return e.value if hasattr(e, "value") else str(e)
@@ -351,8 +345,6 @@ class CityPropertiesDialog(QDialog):
         #if self.ui.buttonBox:
            # self.ui.buttonBox.accepted.connect(self.accept)
             #self.ui.buttonBox.rejected.connect(self.reject)
-        
-
         self.result_city: City | None = None
         
             
@@ -432,7 +424,7 @@ class CityPropertiesDialog(QDialog):
         # - OURS, ROMAN, DISTANT, VULNERABLE -> hide trade route box & layout (and children)
         # - TRADE -> show them
         show_trade_route = (ctype == CityType.TRADE)
-        show_trade_lists = (ctype == CityType.TRADE or ctype == CityType.OURS)
+        show_trade_lists = (ctype in [CityType.TRADE,CityType.OURS, CityType.FUTURE_TRADE])
         # Group box: one call hides/shows all its children
         if self._trade_group is not None:
             self.ui.groupBox.setVisible(show_trade_lists)
@@ -441,13 +433,13 @@ class CityPropertiesDialog(QDialog):
                 self.ui.label_6.setVisible(False)
                 self.ui.listWidgetBuys.setVisible(False)
                 self.sells.set_spins_visible(False)  
-            elif ctype == CityType.TRADE:
+            elif ctype in[CityType.TRADE,CityType.FUTURE_TRADE]:
                 self.ui.label_6.setVisible(True)
                 self.ui.listWidgetBuys.setVisible(True)
                 self.sells.set_spins_visible(True)  
         # If you also have a separate layout area to hide:
 
-# --- quick test harness ----------------------------------------------------
+# --- quick test
 if __name__ == "__main__":
 
     app = QApplication.instance() or QApplication([])

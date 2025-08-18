@@ -184,11 +184,14 @@ class ProgramState:
             
             # images from vanilla files
             self.elements = [
-                {"name": "Our City",      "pil": our_city_with_flag,   "kind": ed.CityType.OURS, "enabled": True},
-                {"name": "Roman City",    "pil": roman_city_with_flag, "kind": ed.CityType.ROMAN, "enabled": True},
-                {"name": "Trade City",    "pil": trade_city_with_flag, "kind": ed.CityType.TRADE, "enabled": True},
-                {"name": "Distant City",  "pil": distant_city_with_flag, "kind": ed.CityType.DISTANT, "enabled": True},
-                {"name": "Empire Edge",   "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE, "enabled": True},
+                {"name": "Our City",         "pil": our_city_with_flag,    "kind": ed.CityType.OURS, "enabled": True},
+                {"name": "Roman City",       "pil": roman_city_with_flag,  "kind": ed.CityType.ROMAN, "enabled": True},
+                {"name": "Trade City",       "pil": trade_city_with_flag,  "kind": ed.CityType.TRADE, "enabled": True},
+                {"name": "Distant City",     "pil": distant_city_with_flag,"kind": ed.CityType.DISTANT, "enabled": True},
+                {"name": "Empire Edge",      "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE, "enabled": True},
+                # Hidden items (same icon different function)
+                {"name": "Vulnerable City",  "pil": roman_city_with_flag,  "kind": ed.CityType.VULNERABLE, "enabled": False},
+                {"name": "Future Trade City","pil": trade_city_with_flag,  "kind": ed.CityType.FUTURE_TRADE, "enabled": False},
                 # Disabled items (commented out for now)
 
                 {"name": "Distant Battle","pil": bits[28],  "kind": EmpObjTypes.DISTANT_BATTLE, "enabled": False},
