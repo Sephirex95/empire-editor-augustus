@@ -341,10 +341,6 @@ class CityPropertiesDialog(QDialog):
        
         self.requested_route_draw = False
         self.ui.pushButton.clicked.connect(self.draw_trade_route)
-        # If your buttonBox exists, wire OK/Cancel to accept/reject
-        #if self.ui.buttonBox:
-           # self.ui.buttonBox.accepted.connect(self.accept)
-            #self.ui.buttonBox.rejected.connect(self.reject)
         self.result_city: City | None = None
         
             

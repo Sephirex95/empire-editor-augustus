@@ -351,15 +351,16 @@ class MainWindow(QMainWindow):
         self._init_cursor_pixmaps()
 
         # Scene / view
+        # Set scene rect with a small margin to ensure proper scrollbar behavior        
         self.scene = QGraphicsScene(self)
         self.ui.graphicsView.setScene(self.scene)
 
         self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.ui.graphicsView.setViewportMargins(10, 10, 10, 10)
 
         self.ui.graphicsView.viewport().setMouseTracking(True)
         
         self.ui.graphicsView.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-
         self.show_no_background_message()               # show placeholder on startup
 
         # UI wiring

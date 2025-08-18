@@ -16,6 +16,13 @@ class EmpireMapView(QGraphicsView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # Configure scrollbar policies for better behavior
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Improve scrollbar responsiveness
+        self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing, True)
+        self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, True)
+
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
 
@@ -483,30 +490,15 @@ class EmpirePropertiesDialog(QDialog):
         """Update ornaments and show_ireland checkbox state based on map properties."""
         if self.main_window:
             # Check if empire.map_info is not None
-            has_map_info = False
-            if hasattr(self.main_window, 'state') and self.main_window.state:
-                if hasattr(self.main_window.state, 'current_empire_object') and self.main_window.state.current_empire_object:
-                    empire = self.main_window.state.current_empire_object
-                    if hasattr(empire, 'map_info') and empire.map_info is not None:
-                        has_map_info = True
-            
-            # Disable checkboxes if empire.map_info != None
-            if has_map_info:
-                self.ornaments_checkbox.setEnabled(False)
-                self.show_ireland_checkbox.setEnabled(False)
-            else:
+            if self.main_window.bg_type in [ed.EmpBackgroundTypes.LEGACY, ed.EmpBackgroundTypes.CUSTOM]:
+                #disable legacy bg button if background is already legacy
+                self.legacy_button.setEnabled(False)
                 self.ornaments_checkbox.setEnabled(True)
                 self.show_ireland_checkbox.setEnabled(True)
-                
-            # Set default states (ornaments enabled, show_ireland disabled by default)
-            self.ornaments_checkbox.setChecked(not has_map_info)
-            self.show_ireland_checkbox.setChecked(False)
-        else:
-            # Fallback: enable all controls if no parent reference
-            self.ornaments_checkbox.setEnabled(True)
-            self.show_ireland_checkbox.setEnabled(True)
-            self.ornaments_checkbox.setChecked(True)
-            self.show_ireland_checkbox.setChecked(False)
+            else:
+                self.legacy_button.setEnabled(True)
+                self.ornaments_checkbox.setEnabled(False)
+                self.show_ireland_checkbox.setEnabled(False)
     
     def get_border_spacing(self):
         """Return the selected border spacing value."""
