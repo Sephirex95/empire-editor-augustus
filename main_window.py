@@ -423,6 +423,10 @@ class MainWindow(QMainWindow):
         except ValueError:
             return None
 # %% setup-related functions
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.center_no_background_message()  # now harmless if item was deleted
+        
     def _init_context_menus(self):
         city_common_menu = [
             ("Move City", lambda it: self.move_city(it.data(1))),
@@ -546,8 +550,6 @@ class MainWindow(QMainWindow):
             with open(file_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
             
-
-            
             # Load empire from XML
             empire = ed.Empire.from_xml_string(xml_content)
             self.state.current_empire_object = empire
@@ -651,84 +653,116 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Ok
             )
             
-        def edit_city(self, city_obj):
-
-            snapshot = copy.deepcopy(city_obj)
-
-            dlg = emp_dlg.CityPropertiesDialog(city_obj, self)
-            result = None
-            try:
-                result = dlg.exec()
-            finally:
-                dlg.deleteLater()  # deleted when control returns to the main event loop
-            if result != QDialog.Accepted:
-                return  # cancel -> no changes
-            if dlg.requested_route_draw:
-                #self._apply_drawing_cursor(True)
-                #self.is_dragging = False #cancel dragging
-                if city_obj.trade_route and len(city_obj.trade_route.trade_points) > 0:
-                    result = QMessageBox.warning(
-                        self, "Trade Route already exists",
-                        "There is already a trade route plotted for this city. Would you like to remove it?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
-                    )
-                    if result == QMessageBox.StandardButton.No:
-                        QTimer.singleShot(100, lambda: self.edit_city(city_obj))
-                        return
-                    else:
-                        # Clear both model and visuals for this specific city
-                        city_index = self._get_city_index(city_obj)
-                        if city_index is not None:
-                            self.clear_trade_route_visuals(city_index)
-                        city_obj.trade_route.trade_points = []
-                self.start_trade_route(city_obj)
-                self.return_to_dialog = True
-                return
-                
-            # Check if city type changed from trade to non-trade
-            old_type = snapshot.city_type
-            new_type = city_obj.city_type
+    def remove_city(self, city):
+        """Remove a city from the empire and scene."""
+        # Check if this city should be unticked in the default cities menu
+        self._untick_default_city_if_removed(city)
+        
+        empire = self.state.current_empire_object
+        if empire and city in empire.cities:
+            city_index = self._get_city_index(city)
+            if city_index is not None:
+                self.clear_trade_route_visuals(city_index)
+            empire.cities.remove(city)
+            self.mark_unsaved_changes()  # Mark as unsaved after removing city
+        self._remove_city_marker(city)
+        if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == ed.CityType.OURS:
+            self.deselect_item() 
             
-            # If city type changed from trade to non-trade, remove trade route
-            if (old_type == ed.CityType.TRADE and new_type != ed.CityType.TRADE):
-                # Clear trade route for non-trade cities
-                city_index = self._get_city_index(city_obj)
-                if self.delete_trade_route_from_item(None,city=city_obj):
+    def move_city(self, city_obj):
+        """Enter drag mode to move an existing city."""
+        self.moving_city = city_obj
+        pm = self._pixmap_for_city(city_obj)
+    
+        # Cache the pixmap for cursor
+        self.drag_pixmap = pm
+    
+        self.is_dragging = True
+        self.ui.graphicsView.setInteractive(False)
+        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self._apply_interactivity_to_all(False)
+    
+        # ensure cursor persists after the context menu closes
+        QTimer.singleShot(0, lambda: self.set_drawing_cursor(True, pm))     
+        
+    def edit_city(self, city_obj):
+
+        snapshot = copy.deepcopy(city_obj)
+
+        dlg = emp_dlg.CityPropertiesDialog(city_obj, self)
+        result = None
+        try:
+            result = dlg.exec()
+        finally:
+            dlg.deleteLater()  # deleted when control returns to the main event loop
+        if result != QDialog.Accepted:
+            return  # cancel -> no changes
+        if dlg.requested_route_draw:
+            #self._apply_drawing_cursor(True)
+            #self.is_dragging = False #cancel dragging
+            if city_obj.trade_route and len(city_obj.trade_route.trade_points) > 0:
+                result = QMessageBox.warning(
+                    self, "Trade Route already exists",
+                    "There is already a trade route plotted for this city. Would you like to remove it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+                )
+                if result == QMessageBox.StandardButton.No:
+                    QTimer.singleShot(100, lambda: self.edit_city(city_obj))
+                    return
+                else:
+                    # Clear both model and visuals for this specific city
+                    city_index = self._get_city_index(city_obj)
                     if city_index is not None:
                         self.clear_trade_route_visuals(city_index)
-                    if city_obj.trade_route:
-                        city_obj.trade_route.trade_points = []
-                        city_obj.trade_route = None 
-
+                    city_obj.trade_route.trade_points = []
+            self.start_trade_route(city_obj)
+            self.return_to_dialog = True
+            return
             
-            # validations
-            if city_obj.city_type == ed.CityType.OURS: 
-                has_ours, ours = self.state.has_our_city()
-                if has_ours and ours is not city_obj:
-                    QMessageBox.warning(
-                        self, "Duplicate 'Our City'",
-                        "There is already an 'Our City'. Remove it first.", QMessageBox.StandardButton.Ok
-                    )
-                    # revert and reopen
-                    city_obj.__dict__.clear()
-                    city_obj.__dict__.update(copy.deepcopy(snapshot.__dict__))
-                    return  # Exit early after revert
+        # Check if city type changed from trade to non-trade
+        old_type = snapshot.city_type
+        new_type = city_obj.city_type
+        
+        # If city type changed from trade to non-trade, remove trade route
+        if (old_type == ed.CityType.TRADE and new_type != ed.CityType.TRADE):
+            # Clear trade route for non-trade cities
+            city_index = self._get_city_index(city_obj)
+            if self.delete_trade_route_from_item(None,city=city_obj):
+                if city_index is not None:
+                    self.clear_trade_route_visuals(city_index)
+                if city_obj.trade_route:
+                    city_obj.trade_route.trade_points = []
+                    city_obj.trade_route = None 
 
-            # Check if trade route type changed and re-render if needed
-            old_route_type = snapshot.trade_route.r_type if snapshot.trade_route else None
-            new_route_type = city_obj.trade_route.r_type if city_obj.trade_route else None
-            
-            if old_route_type != new_route_type and city_obj.trade_route and city_obj.trade_route.trade_points:
-                # Re-render trade route with new type colors
-                self.render_trade_route(city_obj)
+        
+        # validations
+        if city_obj.city_type == ed.CityType.OURS: 
+            has_ours, ours = self.state.has_our_city()
+            if has_ours and ours is not city_obj:
+                QMessageBox.warning(
+                    self, "Duplicate 'Our City'",
+                    "There is already an 'Our City'. Remove it first.", QMessageBox.StandardButton.Ok
+                )
+                # revert and reopen
+                city_obj.__dict__.clear()
+                city_obj.__dict__.update(copy.deepcopy(snapshot.__dict__))
+                return  # Exit early after revert
 
-            # valid -> update visuals
-            if not self.trade_drawing_active:
-                key = id(city_obj)
-                if key in self.city_items:
-                    it = self.city_items[key]
-                    it.setPixmap(self._pixmap_for_city(city_obj))
-                    it.setData(Qt.ItemDataRole.UserRole, city_obj.city_type)
+        # Check if trade route type changed and re-render if needed
+        old_route_type = snapshot.trade_route.r_type if snapshot.trade_route else None
+        new_route_type = city_obj.trade_route.r_type if city_obj.trade_route else None
+        
+        if old_route_type != new_route_type and city_obj.trade_route and city_obj.trade_route.trade_points:
+            # Re-render trade route with new type colors
+            self.render_trade_route(city_obj)
+
+        # valid -> update visuals
+        if not self.trade_drawing_active:
+            key = id(city_obj)
+            if key in self.city_items:
+                it = self.city_items[key]
+                it.setPixmap(self._pixmap_for_city(city_obj))
+                it.setData(Qt.ItemDataRole.UserRole, city_obj.city_type)
 
 # %% ui and drawing
     def update_ui_state(self):
@@ -1720,23 +1754,6 @@ class MainWindow(QMainWindow):
     # ===================================================================
     # CITY & ENTITY MANAGEMENT
     # ===================================================================
-    
-    def remove_city(self, city):
-        """Remove a city from the empire and scene."""
-        # Check if this city should be unticked in the default cities menu
-        self._untick_default_city_if_removed(city)
-        
-        empire = self.state.current_empire_object
-        if empire and city in empire.cities:
-            city_index = self._get_city_index(city)
-            if city_index is not None:
-                self.clear_trade_route_visuals(city_index)
-            empire.cities.remove(city)
-            self.mark_unsaved_changes()  # Mark as unsaved after removing city
-        self._remove_city_marker(city)
-        if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == ed.CityType.OURS:
-            self.deselect_item()
-
     def _untick_default_city_if_removed(self, city):
         """Untick a city in the default cities menu if it was removed."""
         if not hasattr(self, 'cities_data') or not hasattr(self, 'city_actions'):
@@ -1983,22 +2000,6 @@ class MainWindow(QMainWindow):
             menu.addAction(act)
 
         menu.exec(global_pos)
-        
-    def move_city(self, city_obj):
-        """Enter drag mode to move an existing city."""
-        self.moving_city = city_obj
-        pm = self._pixmap_for_city(city_obj)
-    
-        # Cache the pixmap for cursor
-        self.drag_pixmap = pm
-    
-        self.is_dragging = True
-        self.ui.graphicsView.setInteractive(False)
-        self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self._apply_interactivity_to_all(False)
-    
-        # ensure cursor persists after the context menu closes
-        QTimer.singleShot(0, lambda: self.set_drawing_cursor(True, pm))
     
     # ===================================================================
     # COORDINATE & GEOMETRY HELPERS  
@@ -2018,10 +2019,91 @@ class MainWindow(QMainWindow):
         if 0 <= x < pm.width() and 0 <= y < pm.height():
             return x, y
         return None
+    
     def _is_near(self, x1: float, y1: float, x2: float, y2: float, epsilon: float) -> bool:
         """Check if two points are within epsilon distance of each other."""
         return abs(x1 - x2) <= epsilon and abs(y1 - y2) <= epsilon
+    
+    def drop_object(self, scene_pos):
+        kind = self.selected_kind
+        for enum in (ed.CityType, EmpObjTypes):
+            try: kind = enum(kind); break
+            except (ValueError, TypeError): pass
+        if isinstance(kind, ed.CityType):
+            self.handle_city_drop(scene_pos)
+        elif kind == EmpObjTypes.EMPIRE_EDGE:
+            self.handle_drop_empire_edge(scene_pos)
+        else:
+            print(f"Unknown kind: {kind}")
 
+    # ---------- DROP HANDLER ----------
+    def handle_icon_drop(self, scene_pos):
+        # moving existing city?
+        if self.moving_city is not None:
+            xy = self._scene_to_image_xy(scene_pos)
+            city = self.moving_city
+            self.moving_city = None
+            if xy is not None:
+                x, y = xy
+                self._remove_city_marker(city)
+                
+                # Store old position for comparison
+                #old_x, old_y = city.x, city.y
+                
+                # If this is "Our City", find all trade routes that end at it BEFORE moving
+                affected_cities = []
+                if city.city_type == ed.CityType.OURS:
+                    empire = self.state.current_empire_object
+                    if empire and hasattr(empire, 'cities'):
+                        for other_city in empire.cities:
+                            if (other_city != city and 
+                                other_city.trade_route and 
+                                self._trade_route_ends_at_city(other_city.trade_route, city)):
+                                affected_cities.append(other_city)
+                
+                # Convert scene position to center coordinates (city coordinates are centers)
+                city.x, city.y = x, y
+                
+                # Update name label position if it exists
+                key = id(city)
+                if key in self.city_name_labels:
+                    city_item = self.city_items.get(key)
+                    if city_item:
+                        self._create_city_name_label(city)  # Recreate in new position
+                
+                # Update trade route if city has one
+                if city.trade_route and city.trade_route.trade_points:
+                    # Get new center coordinates (already stored as center)
+                    center_x, center_y = city.x, city.y
+                    
+                    # Insert new center point at the beginning of trade route
+                    new_point = ed.TradePoint(x=center_x, y=center_y)
+                    city.trade_route.trade_points.insert(0, new_point)
+                    
+                    # Re-render the trade route
+                    self.render_trade_route(city)
+                
+                # Update all affected trade routes that ended at the old Our City position
+                if affected_cities:
+                    new_center_x, new_center_y = city.x, city.y
+                    
+                    for other_city in affected_cities:
+                        # Add new endpoint to match new Our City position
+                        new_endpoint = ed.TradePoint(x=new_center_x, y=new_center_y)
+                        other_city.trade_route.trade_points.append(new_endpoint)
+                        
+                        # Re-render the updated trade route
+                        self.render_trade_route(other_city)
+                
+                # Convert center coordinates to top-left for scene placement
+                pixmap = self._pixmap_for_city(city)
+                top_left_x = x - pixmap.width() // 2
+                top_left_y = y - pixmap.height() // 2
+                self._place_city_marker(city, top_left_x, top_left_y)
+            return
+        else:
+            # Unified entry point now
+            self.drop_object(scene_pos)
     # ==== CONSOLIDATED DRAWING HELPERS =====================================
     def _hit_existing_point(self, x_img: int, y_img: int, points_list: list) -> int:
         """Generic function to check if click is near an existing point."""
@@ -2790,87 +2872,7 @@ class MainWindow(QMainWindow):
 # %% Everything else
    
     # ---------- ROUTER ----------
-    def drop_object(self, scene_pos):
-        kind = self.selected_kind
-        for enum in (ed.CityType, EmpObjTypes):
-            try: kind = enum(kind); break
-            except (ValueError, TypeError): pass
-        if isinstance(kind, ed.CityType):
-            self.handle_city_drop(scene_pos)
-        elif kind == EmpObjTypes.EMPIRE_EDGE:
-            self.handle_drop_empire_edge(scene_pos)
-        else:
-            print(f"Unknown kind: {kind}")
-
-
-    # ---------- DROP HANDLER ----------
-    def handle_icon_drop(self, scene_pos):
-        # moving existing city?
-        if self.moving_city is not None:
-            xy = self._scene_to_image_xy(scene_pos)
-            city = self.moving_city
-            self.moving_city = None
-            if xy is not None:
-                x, y = xy
-                self._remove_city_marker(city)
-                
-                # Store old position for comparison
-                #old_x, old_y = city.x, city.y
-                
-                # If this is "Our City", find all trade routes that end at it BEFORE moving
-                affected_cities = []
-                if city.city_type == ed.CityType.OURS:
-                    empire = self.state.current_empire_object
-                    if empire and hasattr(empire, 'cities'):
-                        for other_city in empire.cities:
-                            if (other_city != city and 
-                                other_city.trade_route and 
-                                self._trade_route_ends_at_city(other_city.trade_route, city)):
-                                affected_cities.append(other_city)
-                
-                # Convert scene position to center coordinates (city coordinates are centers)
-                city.x, city.y = x, y
-                
-                # Update name label position if it exists
-                key = id(city)
-                if key in self.city_name_labels:
-                    city_item = self.city_items.get(key)
-                    if city_item:
-                        self._create_city_name_label(city)  # Recreate in new position
-                
-                # Update trade route if city has one
-                if city.trade_route and city.trade_route.trade_points:
-                    # Get new center coordinates (already stored as center)
-                    center_x, center_y = city.x, city.y
-                    
-                    # Insert new center point at the beginning of trade route
-                    new_point = ed.TradePoint(x=center_x, y=center_y)
-                    city.trade_route.trade_points.insert(0, new_point)
-                    
-                    # Re-render the trade route
-                    self.render_trade_route(city)
-                
-                # Update all affected trade routes that ended at the old Our City position
-                if affected_cities:
-                    new_center_x, new_center_y = city.x, city.y
-                    
-                    for other_city in affected_cities:
-                        # Add new endpoint to match new Our City position
-                        new_endpoint = ed.TradePoint(x=new_center_x, y=new_center_y)
-                        other_city.trade_route.trade_points.append(new_endpoint)
-                        
-                        # Re-render the updated trade route
-                        self.render_trade_route(other_city)
-                
-                # Convert center coordinates to top-left for scene placement
-                pixmap = self._pixmap_for_city(city)
-                top_left_x = x - pixmap.width() // 2
-                top_left_y = y - pixmap.height() // 2
-                self._place_city_marker(city, top_left_x, top_left_y)
-            return
-        else:
-            # Unified entry point now
-            self.drop_object(scene_pos)
+    
 
     def add_city_icons_to_list(self):
         self.ui.listWidget.clear()
@@ -2984,7 +2986,7 @@ class MainWindow(QMainWindow):
         
         # Remove name label
         self._remove_city_name_label(city)
-
+# %% No-background message
     def show_no_background_message(self):
         """Show the placeholder text when no background is set."""
         if not self._no_bg_item_alive():
@@ -3010,10 +3012,170 @@ class MainWindow(QMainWindow):
         x = (vp.width() - br.width()) / 2
         y = (vp.height() - br.height()) / 2
         self.no_bg_item.setPos(view.mapToScene(int(x), int(y)))
+# %% Default cities
+    def _update_default_cities_menu_state(self):
+        """Enable/disable Default Cities menu based on background type."""
+        # Enable menu only for predefined map types
+        should_enable = self.bg_type in [
+            ed.EmpBackgroundTypes.BIG_MAP,
+            ed.EmpBackgroundTypes.NORTH_MAP,
+            ed.EmpBackgroundTypes.SOUTH_MAP
+        ]
+        
+        self.ui.menuDefaultCities.setEnabled(should_enable)
+        
+        # If enabled, sync the menu state with loaded cities
+        if should_enable:
+            self._sync_default_cities_menu_with_loaded_empire()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.center_no_background_message()  # now harmless if item was deleted
+    def _sync_default_cities_menu_with_loaded_empire(self):
+        """Sync the default cities menu checkboxes with cities already loaded in the empire."""
+        if not self.state.current_empire_object or not hasattr(self.state.current_empire_object, 'cities'):
+            return
+            
+        if not hasattr(self, 'cities_data') or not hasattr(self, 'city_actions'):
+            return
+            
+        current_map_name = self._get_current_map_name()
+        if not current_map_name or current_map_name == ed.EmpBackgroundTypes.CUSTOM:
+            return
+            
+        # Get all cities currently in the empire
+        loaded_cities = self.state.current_empire_object.cities
+        
+        # Clear all checkboxes first
+        for region_name, region_city_actions in self.city_actions.items():
+            for action in region_city_actions:
+                action.setChecked(False)
+        
+        # Check cities that match default city positions
+        for loaded_city in loaded_cities:
+            # Try to find this city in the default cities data
+            for region_name, cities in self.cities_data.items():
+                for city_name, city_data in cities.items():
+                    map_data = city_data.get("default_map", {}).get(current_map_name)
+                    if map_data:
+                        expected_x = map_data.get("x")
+                        expected_y = map_data.get("y")
+                        
+                        # Check if the loaded city matches this default city position (within tolerance)
+                        if (expected_x is not None and expected_y is not None and
+                            abs(loaded_city.x - expected_x) <= 5 and  # 5 pixel tolerance
+                            abs(loaded_city.y - expected_y) <= 5):
+                            
+                            # Find the corresponding action and check it
+                            if region_name in self.city_actions:
+                                for action in self.city_actions[region_name]:
+                                    if action.text() == city_name:
+                                        action.setChecked(True)
+                                        break
+                            break
+        
+        # Update the "Select All" states for each region
+        for region_name in self.region_actions:
+            self._update_region_select_all_state(region_name)
+        
+        # Update the main "Add all" state
+        self._update_main_select_all_state()
+        
+    def _place_default_city(self, region_name, city_name):
+        """Place a default city on the map using coordinates from JSON."""
+        try:
+            current_map_name = self._get_current_map_name()
+            if not current_map_name or not hasattr(self, 'cities_data'):
+                return
+            
+            # Get city data from JSON
+            city_data = self.cities_data.get(region_name, {}).get(city_name, {})
+            map_data = city_data.get("default_map", {}).get(current_map_name, {})
+            
+            if not map_data:
+                print(f"No coordinates found for {city_name} on {current_map_name}")
+                return
+            
+            x = map_data.get("x")
+            y = map_data.get("y")
+           
+            
+            if x is None or y is None:
+                print(f"Invalid coordinates for {city_name}: x={x}, y={y}")
+                return
+            
+            # Check if city already exists at this location to avoid duplicates
+            if self.state.check_if_empire():
+                empire = self.state.current_empire_object
+                for existing_city in empire.cities:
+                    if (existing_city.name == city_name and 
+                        abs(existing_city.x - x) <= 2 and abs(existing_city.y - y) <= 2):
+                        # City already exists at this location, don't add duplicate
+                        print(f"City {city_name} already exists at ({x}, {y})")
+                        return
+            
+            # Create a city object and map the type from JSON
+            city = ed.City(city_name, x, y)
+            city.city_type = ed.CityType.ROMAN.value
+            # Use unified method to add the city properly
+            self._add_city_to_empire(city, force_add=True)            
+        except Exception as e:
+            print(f"Error placing city {city_name}: {e}")
+    
+    def _remove_default_city(self, region_name, city_name):
+        """Remove a default city from the map."""
+        try:
+            if not self.state.check_if_empire():
+                return
+            
+            empire = self.state.current_empire_object
+            current_map_name = self._get_current_map_name()
+            
+            # Get expected coordinates for this default city
+            expected_coords = None
+            if hasattr(self, 'cities_data') and current_map_name:
+                city_data = self.cities_data.get(region_name, {}).get(city_name, {})
+                map_data = city_data.get("default_map", {}).get(current_map_name, {})
+                if map_data:
+                    expected_x = map_data.get("x")
+                    expected_y = map_data.get("y")
+                    if expected_x is not None and expected_y is not None:
+                        expected_coords = (expected_x, expected_y)
+            
+            # Find and remove cities that match the name and location (if known)
+            cities_to_remove = []
+            for city in empire.cities:
+                if city.name == city_name:
+                    # If we know the expected coordinates, only remove cities at that location
+                    if expected_coords:
+                        expected_x, expected_y = expected_coords
+                        if abs(city.x - expected_x) <= 5 and abs(city.y - expected_y) <= 5:
+                            cities_to_remove.append(city)
+                    else:
+                        # If we don't know expected coordinates, remove all cities with this name
+                        cities_to_remove.append(city)
+            
+            # Remove the identified cities
+            for city in cities_to_remove:
+                empire.cities.remove(city)
+                self._remove_city_marker(city)
+                
+                # Remove name label if it exists using proper key
+                city_key = id(city)
+                if city_key in self.city_name_labels:
+                    try:
+                        text_item = self.city_name_labels[city_key]
+                        if hasattr(text_item, 'bg_rect'):
+                            self.scene.removeItem(text_item.bg_rect)
+                        self.scene.removeItem(text_item)
+                        del self.city_name_labels[city_key]
+                    except (RuntimeError, KeyError):
+                        pass
+            
+            if cities_to_remove:
+                print(f"Removed {len(cities_to_remove)} instance(s) of {city_name}")
+            
+        except Exception as e:
+            print(f"Error removing city {city_name}: {e}")
+# %% Other
+
     
     def set_background_image(self, pil_img, open_dialog = False):
         #if no empire atm -> ask to create one
@@ -3114,10 +3276,7 @@ class MainWindow(QMainWindow):
                 
                 # Clear current empire data and set new background
                 self.clear_empire_data()
-                
-                # Create a new clean empire first
                 self.state.new_empire()
-                
                 # Store the current image path for later use
                 self._current_image_path = selected_image
                 
@@ -3128,30 +3287,26 @@ class MainWindow(QMainWindow):
                 
                 # Clear all trade route state when scene is cleared
                 self._clear_scene_state()
-                
+                # --------the below needs to be replaced with a call to normal select background function
                 self.no_bg_item = None
                 self.bg_item = QGraphicsPixmapItem(pixmap)
                 self.bg_type = selected_type  # Store the background type
-                self._update_default_cities_menu_state()  # Update menu state based on new background
+
                 self.bg_item.setZValue(-1000)  # keep it behind markers
                 self.scene.addItem(self.bg_item)
                 self.scene.setSceneRect(pixmap.rect())
                 self.ui.graphicsView.setEnabled(True)
                 self.remove_no_background_message()
+                # --------the above needs to be replaced with a call to normal select background function
                 
                 # Now update the empire with proper map info for custom backgrounds
-                if selected_type == ed.EmpBackgroundTypes.CUSTOM:
+                if selected_type != ed.EmpBackgroundTypes.LEGACY:
                     # Upgrade to version 2 and set map info
                     self.state.current_empire_object.version = 2
                     self.state.current_empire_object.map_info = ed.Map(
                         image=os.path.basename(selected_image),  # Just the filename
                         width=pixmap.width(),
-                        height=pixmap.height(),
-                        x_offset=0,
-                        y_offset=0,
-                        coordinates_relative=False,
-                        coordinates_x_offset=0,
-                        coordinates_y_offset=0
+                        height=pixmap.height()
                     )
                     self.state.current_empire_object.show_ireland = False  # Default setting for custom images
                 else:
@@ -3160,12 +3315,11 @@ class MainWindow(QMainWindow):
                 
                 # Repopulate Default Cities menu for new background
                 self.populate_default_cities_menu()
-                
+                self._update_default_cities_menu_state()  # Update menu state based on new background
                 # Update window title to indicate new file
                 self.current_file_path = None
                 self.has_unsaved_changes = False
                 self.update_window_title()
-                self.state.current_empire_object.show_ireland = False
                 # Update UI state after creating new empire
                 self.update_ui_state()
                 
@@ -3174,8 +3328,7 @@ class MainWindow(QMainWindow):
         # Clear the empire data
         if self.state.current_empire_object:
             self.state.current_empire_object = None
-            
-        #self.state.empire_cities.clear()
+
             
         # Clear the list widget and re-add template icons
         self.ui.listWidget.clear()
@@ -3232,8 +3385,7 @@ class MainWindow(QMainWindow):
                 # If it's just a number, replace with proper Border object
                 elif isinstance(empire.border, (int, float)):
                     empire.border = ed.Border(density=border_spacing)
-            
-            # Save show_ireland to empire object
+
             empire.show_ireland = show_ireland
             
             # Handle ornaments - clear if disabled, keep/add if enabled
@@ -3596,15 +3748,6 @@ class MainWindow(QMainWindow):
         self.populate_default_cities_menu()
         
         print("Map refresh completed")
-    # def get_resource_path(self, relative_path):
-    #     """Get absolute path to resource, works for dev and for PyInstaller bundle."""
-    #     try:
-    #         # PyInstaller creates a temp folder and stores path in _MEIPASS
-    #         base_path = sys._MEIPASS
-    #     except AttributeError:
-    #         base_path = os.path.dirname(os.path.abspath(__file__))
-        
-    #     return os.path.join(base_path, relative_path)
     def populate_default_cities_menu(self):
         """Populate the Default Cities menu with hierarchical regions and cities from JSON."""
         try:
@@ -3627,7 +3770,6 @@ class MainWindow(QMainWindow):
             
             # Clear existing menu items
             self.ui.menuDefaultCities.clear()
-            
             # Keep track of region actions for parent-child relationships
             self.region_actions = {}
             self.city_actions = {}
@@ -3719,70 +3861,7 @@ class MainWindow(QMainWindow):
             else:
                 return ed.EmpBackgroundTypes.NONE
     
-    def _update_default_cities_menu_state(self):
-        """Enable/disable Default Cities menu based on background type."""
-        # Enable menu only for predefined map types
-        should_enable = self.bg_type in [
-            ed.EmpBackgroundTypes.BIG_MAP,
-            ed.EmpBackgroundTypes.NORTH_MAP,
-            ed.EmpBackgroundTypes.SOUTH_MAP
-        ]
-        
-        self.ui.menuDefaultCities.setEnabled(should_enable)
-        
-        # If enabled, sync the menu state with loaded cities
-        if should_enable:
-            self._sync_default_cities_menu_with_loaded_empire()
-
-    def _sync_default_cities_menu_with_loaded_empire(self):
-        """Sync the default cities menu checkboxes with cities already loaded in the empire."""
-        if not self.state.current_empire_object or not hasattr(self.state.current_empire_object, 'cities'):
-            return
-            
-        if not hasattr(self, 'cities_data') or not hasattr(self, 'city_actions'):
-            return
-            
-        current_map_name = self._get_current_map_name()
-        if not current_map_name or current_map_name == ed.EmpBackgroundTypes.CUSTOM:
-            return
-            
-        # Get all cities currently in the empire
-        loaded_cities = self.state.current_empire_object.cities
-        
-        # Clear all checkboxes first
-        for region_name, region_city_actions in self.city_actions.items():
-            for action in region_city_actions:
-                action.setChecked(False)
-        
-        # Check cities that match default city positions
-        for loaded_city in loaded_cities:
-            # Try to find this city in the default cities data
-            for region_name, cities in self.cities_data.items():
-                for city_name, city_data in cities.items():
-                    map_data = city_data.get("default_map", {}).get(current_map_name)
-                    if map_data:
-                        expected_x = map_data.get("x")
-                        expected_y = map_data.get("y")
-                        
-                        # Check if the loaded city matches this default city position (within tolerance)
-                        if (expected_x is not None and expected_y is not None and
-                            abs(loaded_city.x - expected_x) <= 5 and  # 5 pixel tolerance
-                            abs(loaded_city.y - expected_y) <= 5):
-                            
-                            # Find the corresponding action and check it
-                            if region_name in self.city_actions:
-                                for action in self.city_actions[region_name]:
-                                    if action.text() == city_name:
-                                        action.setChecked(True)
-                                        break
-                            break
-        
-        # Update the "Select All" states for each region
-        for region_name in self.region_actions:
-            self._update_region_select_all_state(region_name)
-        
-        # Update the main "Add all" state
-        self._update_main_select_all_state()  
+    
 
     def _city_fits_on_current_background(self, x, y):
         """Check if city coordinates fit within current background image bounds."""
@@ -3835,7 +3914,6 @@ class MainWindow(QMainWindow):
             
             # Check if all cities are selected
             all_selected = all(action.isChecked() for action in city_actions)
-            #any_selected = any(action.isChecked() for action in city_actions)
             
             # Update region action state
             region_action.setChecked(all_selected)
@@ -3860,106 +3938,6 @@ class MainWindow(QMainWindow):
         # Update the main action state
         self.select_all_regions_action.setChecked(all_regions_selected)
     
-    def _place_default_city(self, region_name, city_name):
-        """Place a default city on the map using coordinates from JSON."""
-        try:
-            current_map_name = self._get_current_map_name()
-            if not current_map_name or not hasattr(self, 'cities_data'):
-                return
-            
-            # Get city data from JSON
-            city_data = self.cities_data.get(region_name, {}).get(city_name, {})
-            map_data = city_data.get("default_map", {}).get(current_map_name, {})
-            
-            if not map_data:
-                print(f"No coordinates found for {city_name} on {current_map_name}")
-                return
-            
-            x = map_data.get("x")
-            y = map_data.get("y")
-           
-            
-            if x is None or y is None:
-                print(f"Invalid coordinates for {city_name}: x={x}, y={y}")
-                return
-            
-            # Check if city already exists at this location to avoid duplicates
-            if self.state.check_if_empire():
-                empire = self.state.current_empire_object
-                for existing_city in empire.cities:
-                    if (existing_city.name == city_name and 
-                        abs(existing_city.x - x) <= 2 and abs(existing_city.y - y) <= 2):
-                        # City already exists at this location, don't add duplicate
-                        print(f"City {city_name} already exists at ({x}, {y})")
-                        return
-            
-            # Create a city object and map the type from JSON
-            city = ed.City(city_name, x, y)
-            city.city_type = ed.CityType.ROMAN.value
-            
-            # Use unified method to add the city properly
-            self._add_city_to_empire(city, force_add=True)
-            
-            #print(f"Placed {city_name} at ({x}, {y}) as {city_type}")
-            
-        except Exception as e:
-            print(f"Error placing city {city_name}: {e}")
-    
-    def _remove_default_city(self, region_name, city_name):
-        """Remove a default city from the map."""
-        try:
-            if not self.state.check_if_empire():
-                return
-            
-            empire = self.state.current_empire_object
-            current_map_name = self._get_current_map_name()
-            
-            # Get expected coordinates for this default city
-            expected_coords = None
-            if hasattr(self, 'cities_data') and current_map_name:
-                city_data = self.cities_data.get(region_name, {}).get(city_name, {})
-                map_data = city_data.get("default_map", {}).get(current_map_name, {})
-                if map_data:
-                    expected_x = map_data.get("x")
-                    expected_y = map_data.get("y")
-                    if expected_x is not None and expected_y is not None:
-                        expected_coords = (expected_x, expected_y)
-            
-            # Find and remove cities that match the name and location (if known)
-            cities_to_remove = []
-            for city in empire.cities:
-                if city.name == city_name:
-                    # If we know the expected coordinates, only remove cities at that location
-                    if expected_coords:
-                        expected_x, expected_y = expected_coords
-                        if abs(city.x - expected_x) <= 5 and abs(city.y - expected_y) <= 5:
-                            cities_to_remove.append(city)
-                    else:
-                        # If we don't know expected coordinates, remove all cities with this name
-                        cities_to_remove.append(city)
-            
-            # Remove the identified cities
-            for city in cities_to_remove:
-                empire.cities.remove(city)
-                self._remove_city_marker(city)
-                
-                # Remove name label if it exists using proper key
-                city_key = id(city)
-                if city_key in self.city_name_labels:
-                    try:
-                        text_item = self.city_name_labels[city_key]
-                        if hasattr(text_item, 'bg_rect'):
-                            self.scene.removeItem(text_item.bg_rect)
-                        self.scene.removeItem(text_item)
-                        del self.city_name_labels[city_key]
-                    except (RuntimeError, KeyError):
-                        pass
-            
-            if cities_to_remove:
-                print(f"Removed {len(cities_to_remove)} instance(s) of {city_name}")
-            
-        except Exception as e:
-            print(f"Error removing city {city_name}: {e}")
     # -------------------------------------------------------
     # Non-city handler(s)
     # -------------------------------------------------------

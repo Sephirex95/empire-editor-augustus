@@ -212,8 +212,6 @@ class SgFileReader:
             out[j + 3] = a8
             j += 4
         return bytes(out)
-
-
     
     def _load_plain_image(self, buffer: bytes, record: SgImageRecord):
         expected_length = record.width * record.height * 2
@@ -223,9 +221,6 @@ class SgFileReader:
             buffer[:expected_length], record.width, record.height
         )
         return Image.frombytes("RGBA", (record.width, record.height), rgba_bytes)
-    
-    
-
 
     def _load_image_data(self, record: SgImageRecord, bitmap_record: SgBitmapRecord) -> Optional[Image.Image]:
         is_external = bool(record.flags[0])
