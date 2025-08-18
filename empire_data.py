@@ -42,7 +42,7 @@ class CityType(str, Enum):
     ROMAN = "roman"
     DISTANT = "distant"
     TRADE = "trade"
-    VULNERABLE = "vulnerable"  
+    VULNERABLE = "vulnerable"
     FUTURE_TRADE = "future_trade"
 
 
@@ -441,7 +441,7 @@ class Empire:
                 name = c_el.get("name")
                 x = int(c_el.get("x"))
                 y = int(c_el.get("y"))
-                ctype = c_el.get("type") or CityType.TRADE #default to TRADE if not given
+                ctype = c_el.get("type") or CityType.TRADE
                 # trade route bits
                 trade_route = None
                 tr_cost = c_el.get("trade_route_cost")
