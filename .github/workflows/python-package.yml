@@ -73,25 +73,31 @@ jobs:
               src/main.py
           fi
 
-      - name: Package artifact
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
         shell: bash
         run: |
-          APP_NAME="EmpireEditor"  
-          OUT="dist"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "${APP_NAME}-Windows.zip" "${OUT}/${APP_NAME}.exe"
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            if [ -d "${OUT}/${APP_NAME}.app" ]; then
-              # Preserve macOS resource forks
-              ditto -c -k --sequesterRsrc --keepParent "${OUT}/${APP_NAME}.app" "${APP_NAME}-macOS.zip"
-            else
-              cd "${OUT}"
-              zip -r "../${APP_NAME}-macOS.zip" "${APP_NAME}"
-              cd -
-            fi
+          set -e
+          APP_NAME="EmpireEditor"
+      
+          # Show dist layout (useful while we stabilize)
+          echo "==== dist tree ===="
+          ls -la dist || true
+          if command -v tree >/dev/null 2>&1; then tree dist; fi
+          echo "==================="
+      
+          if [ -f "dist/${APP_NAME}.exe" ]; then
+            echo "Found onefile exe: dist/${APP_NAME}.exe"
+            7z a "${APP_NAME}-Windows.zip" "dist/${APP_NAME}.exe"
+          elif [ -d "dist/${APP_NAME}" ] && [ -f "dist/${APP_NAME}/${APP_NAME}.exe" ]; then
+            echo "Found onedir app: dist/${APP_NAME}/"
+            7z a "${APP_NAME}-Windows.zip" "dist/${APP_NAME}"
           else
-            tar -czf "${APP_NAME}-Linux.tar.gz" -C "${OUT}" "${APP_NAME}"
+            echo "ERROR: Could not find ${APP_NAME} output under dist/"
+            ls -R dist || true
+            exit 1
           fi
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
