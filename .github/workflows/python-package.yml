@@ -48,15 +48,17 @@ jobs:
           pip install pyinstaller
 
       - name: Show versions
+        shell: bash
         run: |
-          python - << 'PY'
+          python - <<'PY'
           import sys
-          print(sys.version)
           import PyInstaller, PIL, PySide6
+          print(sys.version)
           print("PyInstaller", PyInstaller.__version__)
           print("Pillow", PIL.__version__)
           print("PySide6", PySide6.__version__)
           PY
+
 
       - name: Build with PyInstaller
         shell: bash
