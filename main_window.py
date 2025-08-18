@@ -1,3 +1,4 @@
+
 import sys
 import os
 import json
@@ -21,12 +22,6 @@ import copy
 # ---------------------------------------------
 # separated enums
 # ---------------------------------------------
-class EmpCityTypes(Enum):
-    OUR = auto()
-    DISTANT = auto()
-    TRADE = auto()
-    ROMAN = auto()
-
 class EmpObjTypes(Enum):
     EMPIRE_EDGE = auto()
     LAND_DOT = auto()
@@ -39,13 +34,6 @@ class EmpObjTypes(Enum):
     NATIVES = auto()
     DISTANT_BATTLE = auto()
     
-CITYTYPE_TO_KIND = {
-    ed.CityType.OURS: EmpCityTypes.OUR,
-    ed.CityType.TRADE: EmpCityTypes.TRADE,
-    ed.CityType.ROMAN: EmpCityTypes.ROMAN,
-    ed.CityType.VULNERABLE: EmpCityTypes.ROMAN,
-    ed.CityType.DISTANT: EmpCityTypes.DISTANT,
-}
 # ---------------------------------------------
 
 class ProgramState:
@@ -196,10 +184,10 @@ class ProgramState:
             
             # images from vanilla files
             self.elements = [
-                {"name": "Our City",      "pil": our_city_with_flag,   "kind": EmpCityTypes.OUR, "enabled": True},
-                {"name": "Roman City",    "pil": roman_city_with_flag, "kind": EmpCityTypes.ROMAN, "enabled": True},
-                {"name": "Trade City",    "pil": trade_city_with_flag, "kind": EmpCityTypes.TRADE, "enabled": True},
-                {"name": "Distant City",  "pil": distant_city_with_flag, "kind": EmpCityTypes.DISTANT, "enabled": True},
+                {"name": "Our City",      "pil": our_city_with_flag,   "kind": ed.CityType.OURS, "enabled": True},
+                {"name": "Roman City",    "pil": roman_city_with_flag, "kind": ed.CityType.ROMAN, "enabled": True},
+                {"name": "Trade City",    "pil": trade_city_with_flag, "kind": ed.CityType.TRADE, "enabled": True},
+                {"name": "Distant City",  "pil": distant_city_with_flag, "kind": ed.CityType.DISTANT, "enabled": True},
                 {"name": "Empire Edge",   "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE, "enabled": True},
                 # Disabled items (commented out for now)
 
@@ -429,11 +417,11 @@ class MainWindow(QMainWindow):
         ]
 
         self.context_menu_options = {
-            EmpCityTypes.OUR: city_common_menu,
-            EmpCityTypes.DISTANT: city_common_menu,
-            EmpCityTypes.TRADE: city_common_menu,
-            EmpCityTypes.ROMAN: city_common_menu,  # Add Roman cities to context menu
-            
+            ed.CityType.OURS: city_common_menu,
+            ed.CityType.DISTANT: city_common_menu,
+            ed.CityType.TRADE: city_common_menu,
+            ed.CityType.ROMAN: city_common_menu,  # Add Roman cities to context menu
+            ed.CityType.FUTURE_TRADE: city_common_menu,
             EmpObjTypes.EMPIRE_EDGE: [
                 ("Toggle Edge Hidden", lambda it: self.toggle_edge_hidden_from_item(it)),
                 ("Delete Border", self.delete_empire_border),
@@ -1556,8 +1544,6 @@ class MainWindow(QMainWindow):
         self._apply_interactivity_to_all(False)
 
     def deselect_item(self):
-        # No floating icon to clean up anymore - using cursor instead
-        # keep self.selected_kind intact so drop handler knows what was chosen
         self.selected_item = None
         self.is_dragging = False
         self.set_drawing_cursor(False)
@@ -1784,7 +1770,7 @@ class MainWindow(QMainWindow):
             empire.cities.remove(city)
             self.mark_unsaved_changes()  # Mark as unsaved after removing city
         self._remove_city_marker(city)
-        if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == EmpCityTypes.OUR:
+        if self.selected_item and self.selected_item.data(Qt.ItemDataRole.UserRole) == ed.CityType.OURS:
             self.deselect_item()
 
     def _untick_default_city_if_removed(self, city):
@@ -2951,36 +2937,22 @@ class MainWindow(QMainWindow):
             if key in self.city_items:
                 it = self.city_items[key]
                 it.setPixmap(self._pixmap_for_city(city_obj))
-                kind = CITYTYPE_TO_KIND.get(city_obj.city_type)
-                if kind is not None:
-                    it.setData(Qt.ItemDataRole.UserRole, kind)
-                else:
-                    print("save error: kind is none")
+                it.setData(Qt.ItemDataRole.UserRole, city_obj.city_type)
+
    
     # ---------- ROUTER ----------
     def drop_object(self, scene_pos):
-        """
-        Decide which handler to call based on selected_kind.
-        City kinds -> handle_city_drop
-        Object kinds -> dedicated handler (e.g., handle_drop_empire_edge)
-        """
         kind = self.selected_kind
-        if kind is None:
-            return
-        # City types
-        if isinstance(kind, EmpCityTypes):
+        for enum in (ed.CityType, EmpObjTypes):
+            try: kind = enum(kind); break
+            except (ValueError, TypeError): pass
+        if isinstance(kind, ed.CityType):
             self.handle_city_drop(scene_pos)
-            return
+        elif kind == EmpObjTypes.EMPIRE_EDGE:
+            self.handle_drop_empire_edge(scene_pos)
+        else:
+            print(f"Unknown kind: {kind}")
 
-        # Object types
-        if isinstance(kind, EmpObjTypes):
-            if kind == EmpObjTypes.EMPIRE_EDGE:
-                self.handle_drop_empire_edge(scene_pos)
-            else:
-                print(f"No handler for object kind: {kind}")
-            return
-
-        print(f"Unknown kind: {kind}")
 
     # ---------- DROP HANDLER ----------
     def handle_icon_drop(self, scene_pos):
@@ -3077,19 +3049,6 @@ class MainWindow(QMainWindow):
                 return True
             w = w.parent()
         return False
-
-    def _citytype_and_name_for_kind(self, kind):
-        # kind is EmpCityTypes
-        if kind == EmpCityTypes.OUR:
-            return ed.CityType.OURS, "Our City"
-        elif kind == EmpCityTypes.TRADE:
-            return ed.CityType.TRADE, "Trade City"
-        elif kind == EmpCityTypes.ROMAN:
-            return ed.CityType.ROMAN, "Roman City"
-        elif kind == EmpCityTypes.DISTANT:
-            return ed.CityType.DISTANT, "Distant City"
-        else:
-            return None, "City"
     
     def _pixmap_for_city(self, city) -> QPixmap:
         # this should be adjusted, its GPTs hypochondria checking a million things instead of inheriting values
@@ -3106,28 +3065,11 @@ class MainWindow(QMainWindow):
                 pass
     
         # 2) Fallback by city.city_type -> EmpCityTypes kind (no scaling)
-        kind = None
         ct = city.city_type
-        try:
-            if ct == ed.CityType.OURS:
-                kind = EmpCityTypes.OUR
-            elif ct in (ed.CityType.ROMAN, ed.CityType.VULNERABLE):
-                kind = EmpCityTypes.ROMAN
-            elif ct == ed.CityType.TRADE:
-                kind = EmpCityTypes.TRADE
-            elif ct == ed.CityType.DISTANT:
-                kind = EmpCityTypes.DISTANT
-        except Exception:
-            kind = None
-    
-        if kind is None and self.state.elements:
-            kind = EmpCityTypes.OUR
-    
         for el in self.state.elements:
-            if el["kind"] == kind:
+            if el["kind"] == ct:
                 # keep original image size from your PIL source
                 return self.pil_to_qpixmap(el["pil"])
-    
         # Ultimate fallback: return a null pixmap (no assumed size)
         return QPixmap()
 
@@ -3154,7 +3096,7 @@ class MainWindow(QMainWindow):
             item.setFlag(QGraphicsPixmapItem.ItemIsMovable, False)
             item.setData(0, key)
             item.setData(1, city)
-            kind = CITYTYPE_TO_KIND.get(city.city_type)
+            kind = city.city_type
             if kind is not None:
                 item.setData(Qt.ItemDataRole.UserRole, kind)
             else:
@@ -3543,12 +3485,10 @@ class MainWindow(QMainWindow):
             return
         x, y = xy
 
-        kind = self.selected_kind  # EmpCityTypes.*
-        if kind is None or not isinstance(kind, EmpCityTypes):
-            return
+        kind = self.selected_kind
 
         # OUR city: single instance with move-confirmation
-        if kind == EmpCityTypes.OUR:
+        if kind == ed.CityType.OURS:
             has_ours, ours = self.state.has_our_city()
             if has_ours:
                 resp = self._show_move_city_dialog(ours, x, y)
@@ -3568,9 +3508,8 @@ class MainWindow(QMainWindow):
             return
 
         # Other city types: create freely
-        ctype, default_name = self._citytype_and_name_for_kind(kind)
-        if ctype is None:
-            return
+        ctype = ed.CityType(kind)
+        default_name = ed.CityType(kind).value
         # Store center coordinates in city data
         city = ed.City(name=default_name, x=x, y=y, city_type=ctype, sells=[])
         self._add_city_to_empire(city, force_add=True)

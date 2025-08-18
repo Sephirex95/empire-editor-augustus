@@ -43,6 +43,7 @@ class CityType(str, Enum):
     DISTANT = "distant"
     TRADE = "trade"
     VULNERABLE = "vulnerable"  
+    FUTURE_TRADE = "future_trade"
 
 
 class TradeRouteType(str, Enum):
