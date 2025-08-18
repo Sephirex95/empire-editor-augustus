@@ -442,8 +442,6 @@ class Empire:
                 x = int(c_el.get("x"))
                 y = int(c_el.get("y"))
                 ctype = c_el.get("type") or CityType.TRADE #default to TRADE if not given
-                if ctype == CityType.FUTURE_TRADE:
-                    print("future trade found")
                 # trade route bits
                 trade_route = None
                 tr_cost = c_el.get("trade_route_cost")
