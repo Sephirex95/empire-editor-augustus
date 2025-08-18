@@ -63,14 +63,14 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          if [ -f app.spec ]; then
-            pyinstaller --noconfirm --clean app.spec
+          if [ -f EmpireEditor.spec ]; then
+            pyinstaller --noconfirm --clean EmpireEditor.spec
           else
             pyinstaller --noconfirm --clean \
               --name EmpireEditor \
               --onefile --windowed \
               --collect-all PySide6 \
-              src/main.py
+              main_window.py
           fi
 
       - name: Package artifact (Windows)
