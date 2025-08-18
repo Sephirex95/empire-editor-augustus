@@ -1,0 +1,128 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"          # e.g. v0.1.0
+  workflow_dispatch:   # allow manual runs
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            py: "3.11"
+            archive: zip
+          - os: macos-13
+            py: "3.11"
+            archive: zip
+          - os: ubuntu-latest
+            py: "3.11"
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+          cache: "pip"
+
+      - name: Install Qt runtime deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-cursor0 libxcb-xtest0 libxkbcommon-x11-0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Show versions
+        run: |
+          python - << 'PY'
+          import sys
+          print(sys.version)
+          import PyInstaller, PIL, PySide6
+          print("PyInstaller", PyInstaller.__version__)
+          print("Pillow", PIL.__version__)
+          print("PySide6", PySide6.__version__)
+          PY
+
+      - name: Build with PyInstaller
+        shell: bash
+        run: |
+          if [ -f EmpireEditor.spec ]; then
+            pyinstaller --noconfirm --clean EmpireEditor.spec
+          else
+            pyinstaller --noconfirm --clean \
+              --name EmpireEditor \
+              --onefile --windowed \
+              --collect-all PySide6 \
+              src/main.py
+          fi
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          APP_NAME="EmpireEditor"  
+          OUT="dist"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "${APP_NAME}-Windows.zip" "${OUT}/${APP_NAME}.exe"
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            if [ -d "${OUT}/${APP_NAME}.app" ]; then
+              # Preserve macOS resource forks
+              ditto -c -k --sequesterRsrc --keepParent "${OUT}/${APP_NAME}.app" "${APP_NAME}-macOS.zip"
+            else
+              cd "${OUT}"
+              zip -r "../${APP_NAME}-macOS.zip" "${APP_NAME}"
+              cd -
+            fi
+          else
+            tar -czf "${APP_NAME}-Linux.tar.gz" -C "${OUT}" "${APP_NAME}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-artifact
+          path: |
+            *.zip
+            *.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate release notes (optional)
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "notes=Automated build for ${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          name: Release ${{ steps.notes.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
