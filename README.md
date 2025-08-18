@@ -12,13 +12,13 @@ A visual tool for creating and editing *Empire* maps and trade data for the [Aug
 - Requires valid Caesar III installation to run
 - Extracts **vanilla Caesar III** assets **at runtime** from your local installation (not redistributed).
 - A long list of default cities to auto-place on the maps (with recalculated coordinates for all 3 Areldir's maps)
-- Currently **DOES NOT** support invasions or future paths. TBA soon.
+- Currently **DOES NOT** support invasions or future trade. TBA soon.
 - main_window.py is in dire need of a refactor, the code is massive (4k+ lines). There's a lot of duplicated methods and unnecessary checks, which I'll try to remove to be easier to maintain.
 
 ---
 ## Screenshots:
-<img width="2397" height="1186" alt="ss1_emp_editor" src="https://github.com/user-attachments/assets/7f1d646e-782c-4f94-a28b-e2bd19671aa8" />
-<img width="2390" height="1181" alt="ss2_emp_editor" src="https://github.com/user-attachments/assets/a2565806-9dcf-4a81-b429-b8f9410a92e7" />
+<img width="1200" height="560" alt="ss1_emp_editor" src="https://github.com/user-attachments/assets/7f1d646e-782c-4f94-a28b-e2bd19671aa8" />
+<img width="1200" height="560" alt="ss3" src="https://github.com/user-attachments/assets/2d43fe73-3de1-4550-88b8-7390154c8361" />
 
 ## Releases
 
