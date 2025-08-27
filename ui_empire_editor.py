@@ -3,14 +3,148 @@ import os
 import sys
 from pathlib import Path
 import empire_data as ed
-from PySide6.QtCore import Qt, QCoreApplication, QSize
+from PySide6.QtCore import Qt, QCoreApplication, QSettings
 from PySide6.QtGui import QAction, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QWidget, QListWidget, QGraphicsView,
     QMenuBar, QMenu, QStatusBar, QSplitter, QHBoxLayout, QLabel,
     QDialog, QVBoxLayout, QPushButton, QListWidgetItem, QFileDialog,
-    QMessageBox, QSpinBox, QCheckBox, QDialogButtonBox
+    QMessageBox, QSpinBox, QCheckBox, QDialogButtonBox, QFormLayout, QLineEdit
 )
+
+class SettingsDialog(QDialog):
+    """
+    Simple application settings dialog using QSettings.
+    
+    Provides:
+    - Two folder pickers
+    - An optional integer setting controlled by a checkbox + spinbox
+    
+    Keys :
+    PATH_KEY_1
+    PATH_KEY_2 
+    INT_ENABLED_KEY
+    INT_VALUE_KEY
+    """
+        
+    # these match your [General] section
+    PATH_KEY_1      = "c3_main_folder"
+    PATH_KEY_2      = "augustus_user_folder"
+    
+    # put the new feature under its own [features] section
+    INT_ENABLED_KEY = "features/tp_snap_enabled"
+    INT_VALUE_KEY   = "features/tp_snap_distance"
+    
+    def __init__(self, parent: QWidget | None = None, settings: QSettings | None = None):
+            super().__init__(parent)
+            self.setWindowTitle("Options")
+            self.setModal(True)
+            self.setAttribute(Qt.WA_DeleteOnClose)
+            self.resize(520, 220)
+    
+            # Use QSettings provided explicitly or via parent; fall back to default if neither exists.
+            if settings is not None:
+                self.settings = settings
+            elif parent is not None and hasattr(parent, "settings") and isinstance(parent.settings, QSettings):
+                self.settings = parent.settings
+            else:
+                self.settings = QSettings()
+    
+            # --- UI ---
+            root = QVBoxLayout(self)
+    
+            form = QFormLayout()
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    
+            # Folder 1
+            self.folder1_edit = QLineEdit()
+            self.folder1_edit.setPlaceholderText("C3 Main folder…")
+            self.folder1_btn = QPushButton("Browse…")
+            self.folder1_btn.clicked.connect(lambda: self._choose_dir(self.folder1_edit))
+            form.addRow("C3 Main folder:", self._row(self.folder1_edit, self.folder1_btn))
+    
+            # Folder 2
+            self.folder2_edit = QLineEdit()
+            self.folder2_edit.setPlaceholderText("Augustus User Directory…")
+            self.folder2_btn = QPushButton("Browse…")
+            self.folder2_btn.clicked.connect(lambda: self._choose_dir(self.folder2_edit))
+            form.addRow("Augustus User Directory:", self._row(self.folder2_edit, self.folder2_btn))
+    
+            # Int + enable checkbox
+            self.int_enable_chk = QCheckBox("Enable Trade Point snapping")
+            self.int_spin = QSpinBox()
+            self.int_spin.setRange(0, 100)
+            self.int_spin.setSingleStep(1)
+            self.int_spin.setSuffix(" px")
+            self.int_spin.setToolTip("Snap distance used when 'Enable Trade Point snapping' is checked")
+            self.int_enable_chk.toggled.connect(self.int_spin.setEnabled)
+            form.addRow(self.int_enable_chk, self.int_spin)
+    
+            root.addLayout(form)
+    
+            # Buttons
+            buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            root.addWidget(buttons)
+    
+            self._load_settings()
+    
+    # --- helpers ----------------------------------------------------------
+    @staticmethod
+    def _row(*widgets: QWidget) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        for wi in widgets:
+            lay.addWidget(wi)
+        return w
+
+    def _choose_dir(self, target_edit: QLineEdit) -> None:
+        start_dir = target_edit.text() or os.path.expanduser("~")
+        chosen = QFileDialog.getExistingDirectory(self, "Select folder", start_dir)
+        if chosen:
+            target_edit.setText(str(Path(chosen).expanduser().resolve()))
+
+    # --- settings IO ------------------------------------------------------
+    def _load_settings(self) -> None:
+        folder1 = self.settings.value(self.PATH_KEY_1, "", type=str)
+        folder2 = self.settings.value(self.PATH_KEY_2, "", type=str)
+        int_enabled = self.settings.value(self.INT_ENABLED_KEY, False, type=bool)
+        int_value = self.settings.value(self.INT_VALUE_KEY, 0, type=int)
+
+        self.folder1_edit.setText(folder1)
+        self.folder2_edit.setText(folder2)
+        self.int_enable_chk.setChecked(bool(int_enabled))
+        self.int_spin.setValue(int(int_value))
+        self.int_spin.setEnabled(bool(int_enabled))
+
+    def _validate_dir(self, text: str, label: str) -> tuple[bool, str]:
+        text = text.strip()
+        if not text:
+            return True, ""  # empty is allowed; treat as 'unset'
+        p = Path(text).expanduser()
+        if p.is_dir():
+            return True, str(p.resolve())
+        return False, f"{label} does not exist: {text}"
+
+    def accept(self) -> None:  # type: ignore[override]
+        ok1, norm1 = self._validate_dir(self.folder1_edit.text(), "C3 Main folder")
+        ok2, norm2 = self._validate_dir(self.folder2_edit.text(), "Augustus User Directory")
+        if not ok1:
+            QMessageBox.warning(self, "Invalid directory", norm1)
+            return
+        if not ok2:
+            QMessageBox.warning(self, "Invalid directory", norm2)
+            return
+
+        # Save normalized values
+        self.settings.setValue(self.PATH_KEY_1, norm1)
+        self.settings.setValue(self.PATH_KEY_2, norm2)
+        self.settings.setValue(self.INT_ENABLED_KEY, self.int_enable_chk.isChecked())
+        self.settings.setValue(self.INT_VALUE_KEY, int(self.int_spin.value()))
+
+        super().accept()
 
 class EmpireMapView(QGraphicsView):
     def __init__(self, *args, **kwargs):
@@ -122,7 +256,7 @@ class Ui_MainWindow(object):
         self.menuDefaultCities = QMenu(self.menubar); self.menuDefaultCities.setObjectName("menuDefaultCities")
         self.menuView = QMenu(self.menubar); self.menuView.setObjectName("menuView")
         self.menuSettings = QMenu(self.menubar); self.menuSettings.setObjectName("menuSettings")
-        self.menuSettings.setEnabled(False)  # Disabled by default
+        self.menuSettings.setEnabled(True)  # Disabled by default
         self.menuHelp = QMenu(self.menubar); self.menuHelp.setObjectName("menuHelp")
         self.menuGitHub = QMenu(self.menuHelp); self.menuGitHub.setObjectName("menuGitHub")
 

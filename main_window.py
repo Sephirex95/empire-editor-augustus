@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (QIcon,QFont, QPixmap, QImage, QCursor, QPainter,
     QPen, QBrush, QPainterPath, QAction, QColor, QDesktopServices)
 from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QRectF, QSizeF, QTimer, QUrl
-from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog, show_about_dialog
+from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog, show_about_dialog, SettingsDialog
 from PIL import Image
 import empire_data as ed
 import edit_city_logic as emp_dlg
@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         self.ui.actionViewOption5.toggled.connect(self.update_all_city_labels_from_toggles)
         self.ui.actionRefreshMap.triggered.connect(self.refresh_map)
         
+        self.ui.menuSettings.triggered.connect(self._open_settings)
         # Connect help menu
         self.ui.actionAbout.triggered.connect(lambda: show_about_dialog(self))
         
@@ -217,6 +218,12 @@ class MainWindow(QMainWindow):
             return empire.cities.index(city)
         except ValueError:
             return None
+    def _open_settings(self):
+        dlg = SettingsDialog(self, settings=self.state.settings)
+        if dlg.exec():
+            self.state.apply_settings_from_store()
+            # react to changes if needed (e.g., reload images if c3_main_folder changed)
+
 # %% setup-related functions
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -408,8 +415,8 @@ class MainWindow(QMainWindow):
             return
     
         # Read default folder from settings (fallback to CWD)
-        config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
-        settings = QSettings(config_path, QSettings.Format.IniFormat)
+
+        settings = self.state.settings
         default_folder = settings.value("default_save_folder", type=str) or os.getcwd()
         if not os.path.exists(default_folder):
             default_folder = os.getcwd()
@@ -1941,7 +1948,6 @@ class MainWindow(QMainWindow):
                 self._place_city_marker(city, top_left_x, top_left_y)
                 self.refresh_map() #handle all route updates and stuff
 
-                    
             return
         else:
             # Unified entry point now
@@ -3699,8 +3705,8 @@ class MainWindow(QMainWindow):
                     self.scene.removeItem(item)
         self._trade_dot_reps = []
                     
-        snapping_variable = 5
-        moved = self.align_trade_points(snapping_variable)
+        if self.state.snap_enabled:
+            moved = self.align_trade_points(self.state.snap_distance)
 
         # Clear internal state
         self.city_items.clear()

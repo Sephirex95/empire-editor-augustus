@@ -31,18 +31,65 @@ class ProgramState:
         self.selected_empire_image = None
         self.city_icons_map = {}
         self.init_failed = False
+        self.current_empire_object = None
+        
+        # paths + feature fields
         self.c3_main_path = ""
         self.augustus_user_path = ""
         self.augustus_editor_empires_path = ""
         self.augustus_community_image_path = ""
-        self.current_empire_object  = None
+        self.snap_enabled = False
+        self.snap_distance = 0
+        
+        config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
+        self.settings = QSettings(config_path, QSettings.Format.IniFormat)
+        # --- SLAP IN DEFAULTS (only if not set yet) ---
+        s = self.settings
+        s.beginGroup("features")
+        if s.value("tp_snap_enabled") is None:
+            s.setValue("tp_snap_enabled", True)   
+        if s.value("tp_snap_distance") is None:
+            s.setValue("tp_snap_distance", 5)
+        s.endGroup()
+        s.sync()
+        
+        #instaload
+        self.snap_enabled  = s.value("features/tp_snap_enabled", True, bool)
+        self.snap_distance = s.value("features/tp_snap_distance", 5, int)
+        
     def init(self):
         if not self.load_c3_folder():
             self.init_failed = True
             return False
         self.select_augustus_user_directory()
+        self.apply_settings_from_store()   # keep local fields in sync
         self.load_images()
         return not self.init_failed
+
+    def apply_settings_from_store(self):
+        """Refresh cached fields from QSettings (call after any dialog saves)."""
+        s = self.settings
+        self.c3_main_path = s.value("c3_main_folder", "", str)
+        self.augustus_user_path = s.value("augustus_user_folder", "", str)
+        self.snap_enabled = s.value("features/tp_snap_enabled", False, bool)
+        self.snap_distance = s.value("features/tp_snap_distance", 0, int)
+
+        # derive convenience paths
+        if self.augustus_user_path:
+            self.augustus_community_image_path = os.path.join(self.augustus_user_path, "community", "image")
+            self.augustus_editor_empires_path = os.path.join(self.augustus_user_path, "editor", "empires")
+        else:
+            self.augustus_community_image_path = ""
+            self.augustus_editor_empires_path = ""
+
+    # --- helpers to keep set/get tidy (optional) ---------------------------
+    def set_snap_enabled(self, enabled: bool):
+        self.settings.setValue("features/tp_snap_enabled", bool(enabled))
+        self.snap_enabled = bool(enabled)
+
+    def set_snap_distance(self, value: int):
+        self.settings.setValue("features/tp_snap_distance", int(value))
+        self.snap_distance = int(value)
 
     def _create_my_empires_folder(self, settings):
         """Helper function to create my_empires folder and set default_save_folder setting."""
@@ -68,9 +115,8 @@ class ProgramState:
             return False
 
     def load_c3_folder(self):
-        config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
-        settings = QSettings(config_path, QSettings.Format.IniFormat)
-        self.c3_main_path = settings.value("c3_main_folder", type=str)
+        s = self.settings
+        self.c3_main_path = s.value("c3_main_folder", "", str)
 
         if not self.c3_main_path:
             QMessageBox.information(
@@ -87,11 +133,11 @@ class ProgramState:
                 QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
             )
             if folder and self.validate_c3_directory(folder):
-                settings.setValue("c3_main_folder", folder)
+                s.setValue("c3_main_folder", folder)
                 self.c3_main_path = folder
                 
                 # Create 'my_empires' folder using helper function
-                self._create_my_empires_folder(settings)
+                self._create_my_empires_folder(s)
                 
                 return True
             else:
@@ -100,18 +146,9 @@ class ProgramState:
                 )
                 return False
         else:
-            # C3 folder is already configured, but check if my_empires folder and setting exist
-            default_save_folder = settings.value("default_save_folder", type=str)
-            
-            # Create my_empires folder if it doesn't exist or setting is missing
-            if not default_save_folder:
-                self._create_my_empires_folder(settings)
-            else:
-                # Check if the existing path is valid and exists
-                if not os.path.exists(default_save_folder):
-                    print(f"Default save folder {default_save_folder} no longer exists, recreating...")
-                    self._create_my_empires_folder(settings)
-        
+            default_save_folder = s.value("default_save_folder", "", str)
+            if not default_save_folder or not os.path.exists(default_save_folder):
+                self._create_my_empires_folder(s)
         return True
 
     def validate_c3_directory(self, path: str) -> bool:
@@ -126,6 +163,7 @@ class ProgramState:
             )
             return False
         return True
+    
     def select_augustus_user_directory(self) -> bool:
         """
         Politely ask the user if they'd like to select their Augustus *user* directory.
@@ -133,11 +171,8 @@ class ProgramState:
         - Sets self.augustus_user_path on success
         - Returns True if a valid directory is stored/confirmed, False otherwise
         """
-        config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
-        settings = QSettings(config_path, QSettings.Format.IniFormat)
-    
-        # If already configured and still exists, we're done.
-        existing = settings.value("augustus_user_folder", type=str)
+        s = self.settings
+        existing = s.value("augustus_user_folder", "", str)
         if existing and os.path.isdir(existing):
             self.augustus_user_path = existing
             return True
@@ -173,7 +208,7 @@ class ProgramState:
             return False
     
         if self.validate_augustus_user_directory(folder):
-            settings.setValue("augustus_user_folder", folder)
+            s.setValue("augustus_user_folder", folder)
             self.augustus_user_path = folder
             self.augustus_community_image_path = os.path.join(folder, "community", "image")
             self.augustus_editor_empires_path = os.path.join(folder, "editor", "empires")
