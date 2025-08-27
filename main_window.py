@@ -1,4 +1,3 @@
-
 import sys
 import os
 import json
@@ -549,7 +548,8 @@ class MainWindow(QMainWindow):
             # Read the XML file
             with open(file_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
-            
+            self.clear_empire_data()
+            #self.clear
             # Load empire from XML
             empire = ed.Empire.from_xml_string(xml_content)
             self.state.current_empire_object = empire
@@ -908,8 +908,14 @@ class MainWindow(QMainWindow):
             return
         
         # Clear existing city markers and visual state
-        self.city_items.clear()
-        self._clear_scene_state()
+        try:
+            self.city_items.clear()
+        except Exception as e:
+            print(f"{e}")
+        try:
+            self._clear_scene_state()
+        except Exception as e:
+            print(f"{e}")
         
         # If scene has items, clear and reset (but keep background)
         if self.scene and self.bg_item:
@@ -1721,9 +1727,11 @@ class MainWindow(QMainWindow):
         self.selected_trade_route_city = None
         
         # Clear city items tracking (items will be removed from scene by scene.clear())
-        self.city_items.clear()
-        self.city_name_labels.clear()
-        
+        try:
+            self.city_items.clear()
+            self.city_name_labels.clear()
+        except Exception as e:
+            print(f"{e}")
         # Clear drawing states
         self.edge_drawing_active = False
         self.edge_points_img = []
@@ -1748,8 +1756,14 @@ class MainWindow(QMainWindow):
         self.vertex_handle_items = []
         
         # Clear visual overlays
-        self.clear_border_selection_overlay()
-        self.clear_trade_route_selection_overlay()
+        try:
+            self.clear_border_selection_overlay()
+        except Exception as e:
+            print(f"{e}")
+        try:
+            self.clear_trade_route_selection_overlay()
+        except Exception as e:
+            print(f"{e}")
 
     # ===================================================================
     # CITY & ENTITY MANAGEMENT
