@@ -276,7 +276,7 @@ class Empire:
                         c_el.set("trade_route_type", tr.r_type)
                     if tr.trade_points:
                         tp_el = SubElement(c_el, "trade_points")
-                        for p in tr.trade_points:
+                        for p in reversed(tr.trade_points):
                             pt = SubElement(tp_el, "point")
                             pt.set("x", str(p.x))
                             pt.set("y", str(p.y))
@@ -452,7 +452,7 @@ class Empire:
                 except:
                     print("breakpoint")
                 if tp_el is not None:
-                    for pt in tp_el.findall("point"):
+                    for pt in reversed(tp_el.findall("point")):
                         trade_points.append(TradePoint(int(pt.get("x")), int(pt.get("y"))))
                 if tr_cost is not None or tr_type is not None or trade_points:
                     trade_route = TradeRoute(

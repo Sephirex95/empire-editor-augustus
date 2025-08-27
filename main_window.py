@@ -763,6 +763,7 @@ class MainWindow(QMainWindow):
                 it = self.city_items[key]
                 it.setPixmap(self._pixmap_for_city(city_obj))
                 it.setData(Qt.ItemDataRole.UserRole, city_obj.city_type)
+        self.refresh_map()
 
 # %% ui and drawing
     def update_ui_state(self):
@@ -772,8 +773,6 @@ class MainWindow(QMainWindow):
         # Enable/disable Empire Properties action based on whether we have an empire
         if hasattr(self.ui, 'actionEmpireProperties'):
             self.ui.menuEmpireProperties.setEnabled(has_empire)
-
-
 
     def _validate_empire_elements_fit_background(self, new_bg_pixmap):
         """Check if current empire elements fit within the new background dimensions.
@@ -2574,8 +2573,9 @@ class MainWindow(QMainWindow):
         # Render the route
         pts = [(p.x, p.y) for p in city.trade_route.trade_points]
         pts.insert(0, (city.x, city.y))
-        _, our_city = self.state.has_our_city()
-        pts.append((our_city.x, our_city.y))
+        has_ours, our_city = self.state.has_our_city()
+        if has_ours:
+            pts.append((our_city.x, our_city.y))
         is_land = (city.trade_route.r_type == ed.TradeRouteType.LAND)
         dot_pm = self._get_trade_dot_pixmap(is_land)
         
@@ -3849,7 +3849,6 @@ class MainWindow(QMainWindow):
                 return ed.EmpBackgroundTypes.CUSTOM  #
             else:
                 return ed.EmpBackgroundTypes.NONE
-    
     
 
     def _city_fits_on_current_background(self, x, y):
