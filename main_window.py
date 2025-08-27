@@ -1056,9 +1056,7 @@ class MainWindow(QMainWindow):
         # Convert center coordinates to top-left for scene placement
         pixmap = self._pixmap_for_city(city.city_type)
         if not pixmap.isNull():
-            top_left_x = city.x - pixmap.width() // 2
-            top_left_y = city.y - pixmap.height() // 2
-            self._place_city_marker(city, top_left_x, top_left_y)
+            self._place_city_marker(city, city.x, city.y)
 
     def delete_trade_route_from_item(self, item, city=None):
         """Delete trade route path from context menu selection."""
@@ -1941,13 +1939,8 @@ class MainWindow(QMainWindow):
                 if city.trade_route:
                     self.render_trade_route(city)
 
-                # Convert center coordinates to top-left for scene placement
-                pixmap = self._pixmap_for_city(city.city_type)
-                top_left_x = x - pixmap.width() // 2
-                top_left_y = y - pixmap.height() // 2
-                self._place_city_marker(city, top_left_x, top_left_y)
+                self._place_city_marker(city, x, y)
                 self.refresh_map() #handle all route updates and stuff
-
             return
         else:
             # Unified entry point now
@@ -2790,7 +2783,9 @@ class MainWindow(QMainWindow):
         pm = self._pixmap_for_city(city.city_type)
         if self.bg_item is None:
             return
-        scene_pt = self.bg_item.mapToScene(x, y)
+        offset_x = x - pm.width()//2
+        offset_y = y - pm.height()//2
+        scene_pt = self.bg_item.mapToScene(offset_x, offset_y)
     
         key = id(city)
         if key in self.city_items:
@@ -2982,7 +2977,7 @@ class MainWindow(QMainWindow):
             
             # Create a city object and map the type from JSON
             city = ed.City(city_name, x, y)
-            city.city_type = ed.CityType.ROMAN.value
+            city.city_type = ed.CityType.ROMAN
             # Use unified method to add the city properly
             self._add_city_to_empire(city, force_add=True)            
         except Exception as e:
@@ -3346,8 +3341,10 @@ class MainWindow(QMainWindow):
         kind = self.selected_kind
         ctype = ed.CityType(kind)
         pixmap = self._pixmap_for_city(ctype)
-        top_left_x = x - pixmap.width() // 2
-        top_left_y = y - pixmap.height() // 2
+        pix_w = pixmap.width()
+        pix_h = pixmap.height() 
+        top_left_x = x - pix_w  // 2
+        top_left_y = y - pix_h  // 2
 
         # OUR city: single instance with move-confirmation
         if kind == ed.CityType.OURS:
@@ -3373,7 +3370,9 @@ class MainWindow(QMainWindow):
         
         default_name = ed.CityType(kind).value
         # Store center coordinates in city data
-        city = ed.City(name=default_name, x=top_left_x, y=top_left_y, city_type=ctype, sells=[])
+        # corrected
+        city = ed.City(name=default_name, x=x, y=y, city_type=ctype)
+
         if ctype in (ed.CityType.TRADE,ed.CityType.FUTURE_TRADE):
             city.trade_route = ed.TradeRoute(cost = 500, r_type = ed.TradeRouteType.LAND)
         self._add_city_to_empire(city, force_add=True)
