@@ -565,8 +565,9 @@ def show_about_dialog(parent=None):
     dlg.setWindowTitle("About Empire Editor")
     dlg.setModal(True)
     dlg.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
-
+    
     icon_path = _find_editor_icon()
+    editor_ver = parent.program_editor_version
     if icon_path:
         dlg.setWindowIcon(QIcon(str(icon_path)))        # Layout: icon on the left, rich text on the right
         layout = QVBoxLayout(dlg)
@@ -590,7 +591,7 @@ def show_about_dialog(parent=None):
         text_lbl.setOpenExternalLinks(True)
         text_lbl.setWordWrap(True)
         text_lbl.setText(
-            """<b>Empire Editor for Augustus</b> by <b>Sephirex95</b><br>
+            f"""<b>Empire Editor for Augustus</b> by <b>Sephirex95</b> version {str(editor_ver)}<br>
             <a href="https://github.com/Sephirex95/empire-editor-augustus">
             https://github.com/Sephirex95/empire-editor-augustus</a><br><br>
 

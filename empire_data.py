@@ -5,15 +5,45 @@ from typing import List, Optional
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
+import re
 
-# Global header comment for exported files
-EMPIRE_EDITOR_HEADER = """[empire_editor_version = x]
+EDITOR_VERSION: float = 0.21          # bump here
+EDITOR_SIGNATURE = "sephirex95"       # legacy header marker
+
+def get_editor_version() -> float:
+    return float(EDITOR_VERSION)
+
+EMPIRE_EDITOR_HEADER_TEMPLATE = """[empire_editor_version = {version}]
 Made with EmpireEditor for Augustus by Sephirex95
 https://github.com/Sephirex95/empire-editor-augustus
 Empire maps made and generously shared by Areldir"""
 
+def _render_editor_header_comment(version_float: float) -> str:
+    # write as short string (no trailing zeros unless needed)
+    s = f"{version_float}".rstrip("0").rstrip(".") if "." in f"{version_float}" else f"{version_float}"
+    return EMPIRE_EDITOR_HEADER_TEMPLATE.format(version=s)
+
+def _extract_editor_version(xml_text: str, root) -> float | None:
+    """Try root attribute first, then header comment. Return float or None."""
+    # root attribute: <empire ... editor_version="0.21">
+    if root is not None:
+        attr = root.get("editor_version")
+        if attr:
+            m = re.match(r"^\d+(?:\.\d+)?$", attr.strip())
+            if m:
+                return float(m.group(0))
+    # header: [empire_editor_version = 0.21]
+    m = re.search(r"\[\s*empire_editor_version\s*=\s*(\d+(?:\.\d+)?)\s*\]", xml_text, re.IGNORECASE)
+    if m:
+        return float(m.group(1))
+    return None
+
+def _has_editor_signature(xml_text: str) -> bool:
+    low = xml_text.lower()
+    return (EDITOR_SIGNATURE in low) or ("empireeditor" in low)
 
 # ---------- Enums map 1:1 to XML attribute values ----------
+
 
 class OrnamentType(str, Enum):
     STONEHENGE = "The Stonehenge"
@@ -207,8 +237,13 @@ class Map:
 
 @dataclass
 class Empire:
-    def __init__(self, version=1, ornaments=None, border=None, cities=None, invasion_paths=None, distant_battle_paths=None, map_info=None, show_ireland=True):
+    global editor_version
+    def __init__(self, version=1, ornaments=None, border=None, cities=None,
+                     invasion_paths=None, distant_battle_paths=None, map_info=None,
+                     show_ireland=True, editor_version: float | None = None):
         self.version = int(version)
+        self.editor_version: float = float(editor_version) if editor_version is not None else get_editor_version()
+    
         self.ornaments = list(ornaments) if ornaments else []
         self.border = border
         self.cities = list(cities) if cities else []
@@ -228,6 +263,9 @@ class Empire:
     def _to_element(self):
         root = Element("empire")
         root.set("version", str(self.version))
+        # write editor version as attribute too 
+        root.set("editor_version", f"{self.editor_version}".rstrip("0").rstrip(".") if "." in f"{self.editor_version}" else f"{self.editor_version}")
+    
         if hasattr(self, 'show_ireland') and self.show_ireland:
             root.set("show_ireland", "true")
 
@@ -338,18 +376,17 @@ class Empire:
         else:
             body = tostring(root, encoding=encoding).decode(encoding)
         parts = []
-        if include_declaration:
-            parts.append("<?xml version=\"1.0\"?>")
-        if include_doctype:
+        if include_declaration: 
+            parts.append('<?xml version="1.0"?>')
+        if include_doctype:     
             parts.append("<!DOCTYPE empire>")
-        
-        # Add the header comment
-        comment_lines = EMPIRE_EDITOR_HEADER.strip().split('\n')
+    
+        # Dynamic header with editor version as string
+        header = _render_editor_header_comment(self.editor_version)
         parts.append("<!--")
-        for line in comment_lines:
-            parts.append(f"  {line}")
+        parts += [f"  {line}" for line in header.strip().split("\n")]
         parts.append("-->")
-        
+    
         parts.append(body)
         return "\n".join(parts)
 
@@ -359,7 +396,6 @@ class Empire:
             f.write(xml_text)
 
     # ------------------------ XML reading (deserialization) ------------------------
-
 
     @classmethod
     def _parse_bool(cls, text):
@@ -375,7 +411,18 @@ class Empire:
         root = tree.getroot()
         if root.tag != "empire":
             raise ValueError("Root tag must be <empire>")
+    
         version = int(root.get("version"))
+    
+        # NEW: determine editor_version with precedence + fallbacks
+        ev = _extract_editor_version(xml_text, root)
+        if ev is None:
+            # If it's one of *your* files (legacy header w/o version), assume 0.2 exactly
+            if _has_editor_signature(xml_text):
+                ev = 0.2
+            else:
+                # Not your file → assume current editor version
+                ev = get_editor_version()
         
         # Parse show_ireland attribute
         show_ireland = root.get("show_ireland", "false").lower() == "true"
@@ -452,7 +499,13 @@ class Empire:
                 except:
                     print("breakpoint")
                 if tp_el is not None:
-                    for pt in reversed(tp_el.findall("point")):
+                    if ev > 0.20:
+                        trade_points_list = reversed(tp_el.findall("point")) 
+                        #0.20 and earlier versions bug: tradepoints in wrong order
+                        #program does them trade->ours, engine does ours->trade
+                    else:
+                        trade_points_list = tp_el.findall("point")
+                    for pt in trade_points_list:
                         trade_points.append(TradePoint(int(pt.get("x")), int(pt.get("y"))))
                 if tr_cost is not None or tr_type is not None or trade_points:
                     trade_route = TradeRoute(
@@ -505,8 +558,11 @@ class Empire:
                     waypoints.append(Waypoint(int(w.get("num_months")), int(w.get("x")), int(w.get("y"))))
                 distant_battle_paths.append(DistantBattlePath(path_type=ptype, start_x=start_x, start_y=start_y, waypoints=waypoints))
 
-        return Empire(version, ornaments, border, cities, invasion_paths, distant_battle_paths, map_info, show_ireland)
-
+        emp = Empire(version, ornaments, border, cities, invasion_paths,
+                     distant_battle_paths, map_info, show_ireland,
+                     editor_version=ev)
+        return emp
+    
     @classmethod
     def read_xml(cls, path):
         with open(path, "r", encoding="utf-8") as f:

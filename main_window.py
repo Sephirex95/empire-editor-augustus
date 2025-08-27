@@ -5,10 +5,11 @@ import shutil
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QGraphicsScene, QGraphicsView,
     QGraphicsPixmapItem, QApplication, QListWidgetItem, QMessageBox, QDialog, QGraphicsLineItem,
-    QGraphicsItemGroup,  QGraphicsItem,  QMenu, QMenuBar, QGraphicsTextItem, QGraphicsRectItem
+    QGraphicsItemGroup,  QGraphicsItem,  QMenu, QGraphicsTextItem, QGraphicsRectItem
 
 )
-from PySide6.QtGui import QIcon,QFont, QPixmap, QImage, QCursor, QPainter, QPen, QBrush, QPainterPath, QAction, QColor, QDesktopServices
+from PySide6.QtGui import (QIcon,QFont, QPixmap, QImage, QCursor, QPainter,
+    QPen, QBrush, QPainterPath, QAction, QColor, QDesktopServices)
 from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QRectF, QSizeF, QTimer, QUrl
 from sg_reader_light import SgFileReader
 from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog, show_about_dialog
@@ -17,6 +18,7 @@ import empire_data as ed
 import edit_city_logic as emp_dlg
 from enum import Enum, auto
 import copy
+from html import escape as esc
 
 # ---------------------------------------------
 # separated enums
@@ -272,6 +274,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+        self.program_editor_version = ed.get_editor_version()
         # Set window icon
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "editor.ico")
         if os.path.exists(icon_path):
@@ -374,11 +377,11 @@ class MainWindow(QMainWindow):
         self.ui.actionSave.triggered.connect(self.save_empire_xml)
         
         # Connect view options
-        self.ui.actionViewOption1.triggered.connect(self.toggle_cities_visibility)
+        self.ui.actionViewOption1.toggled.connect(self.toggle_cities_visibility)
         self.ui.actionViewOption2.triggered.connect(self.toggle_trade_routes_visibility)
-        self.ui.actionViewOption3.triggered.connect(self.toggle_border_visibility)
-        self.ui.actionViewOption4.toggled.connect(self.update_all_city_label_texts_from_toggles)
-        self.ui.actionViewOption5.toggled.connect(self.update_all_city_label_texts_from_toggles)
+        self.ui.actionViewOption3.toggled.connect(self.toggle_border_visibility)
+        self.ui.actionViewOption4.toggled.connect(self.update_all_city_labels_from_toggles)
+        self.ui.actionViewOption5.toggled.connect(self.update_all_city_labels_from_toggles)
         self.ui.actionRefreshMap.triggered.connect(self.refresh_map)
         
         # Connect help menu
@@ -403,6 +406,7 @@ class MainWindow(QMainWindow):
         self.ui.actionGitHub_Custom.triggered.connect(self._open_github_custom)
         # Set initial window title
         self.update_window_title()
+        
 # %% Private helpers for actions
     def _open_github_augustus(self):
         url = "https://github.com/Keriew/augustus/tree/master?tab=readme-ov-file"  # Replace with actual Augustus GitHub URL
@@ -1301,7 +1305,7 @@ class MainWindow(QMainWindow):
 
     def update_window_title(self):
         """Update the window title to show current file and unsaved changes status."""
-        base_title = "Empire Editor"
+        base_title = f"Empire Editor v{self.program_editor_version}"
         
         if self.current_file_path:
             filename = os.path.basename(self.current_file_path)
@@ -2339,10 +2343,16 @@ class MainWindow(QMainWindow):
                 city.trade_route.trade_points[self.editing_vertex_index].y = int(y)
                 self.mark_unsaved_changes()  # Mark as unsaved after modifying trade route
                 # Re-render the trade route
-                self.render_trade_route(city)
-                # Recreate vertex handles with new positions
+                # Rebuild global dot reps and rerender all routes so dedupe is correct
+                self._trade_dot_reps = []
+                for c in self.state.current_empire_object.cities:
+                    if c.trade_route:
+                        self.render_trade_route(c)
+                
+                # Recreate handles for the edited route
                 pts = [(p.x, p.y) for p in city.trade_route.trade_points]
                 self.create_vertex_handles("TRADE_ROUTE", pts, city)
+                # Recreate vertex handles with new positions
                 
         elif self.editing_vertex_type == "EMPIRE_BORDER":
             empire = self.state.current_empire_object
@@ -2353,11 +2363,11 @@ class MainWindow(QMainWindow):
                 empire.border.edges[self.editing_vertex_index].y = int(y)
                 self.mark_unsaved_changes()  # Mark as unsaved after modifying border
                 # Re-render the empire border
-                self.render_empire_border()
+
                 # Recreate vertex handles with new positions
                 pts = [(edge.x, edge.y) for edge in empire.border.edges]
                 self.create_vertex_handles("EMPIRE_BORDER", pts)
-        
+                self.render_empire_border()
         # Reset editing state
         self.vertex_editing_active = False
         self.editing_vertex_type = None
@@ -3532,92 +3542,135 @@ class MainWindow(QMainWindow):
         n = self.ui.actionViewOption4.isChecked()
         t = self.ui.actionViewOption5.isChecked()
         return 'both' if n and t else ('name' if n else ('trade' if t else 'off'))
-
-
+    
+        
     def _create_city_label(self, city, mode: str | None = None):
+        """Create (or update) a single label for this city and lay it out."""
         mode = mode or self._get_city_label_mode()
         key = id(city)
         if key not in self.city_items:
             return
-        # if key in self.city_labels:
-        #     self._remove_city_label(city)
-        # remove any old per-type/unified labels
-        # for dname in ("city_name_labels", "city_trade_labels", "city_labels"): #labels are created from xml so checking all types shouldnt be necessary
-        #     d = getattr(self, dname, None)
-        #     if d and key in d:
-        #         it = d.pop(key)
-        #         try:
-        #             self.scene.removeItem(it)
-        #             if hasattr(it, "bg_rect"):
-        #                 self.scene.removeItem(it.bg_rect)
-        #         except RuntimeError:
-        #             pass
     
-        # build both text variants up-front
+        # --- compute texts once ---
         name_text = city.name or ""
+    
         def _fmt_res(r, omit_amount=False):
             nm = getattr(r.resource_type, "value", r.resource_type)
             nm = str(nm).replace("_", " ").title()
-            return f"{nm}×{r.amount}" if (not omit_amount and r.amount not in (None, 1)) else nm
+            return f"{nm}[{r.amount}]" if (not omit_amount and r.amount not in (None, 1)) else nm
+    
         sells = ", ".join(_fmt_res(r, omit_amount=(city.city_type == ed.CityType.OURS)) for r in (city.sells or []))
         buys  = ", ".join(_fmt_res(r) for r in (city.buys or []))
         trade = ("S: " + sells if sells else "") + (" | " if sells and buys else "") + ("B: " + buys if buys else "")
     
-        # create items
-        text_item = QGraphicsTextItem()
-        font = QFont("Bookman Old Style", pointSize=8); font.setBold(True)
-        text_item.setFont(font); text_item.setDefaultTextColor(Qt.GlobalColor.black)
-    
-        bg_rect = QGraphicsRectItem()
-        bg_rect.setBrush(QBrush(Qt.GlobalColor.white))
-        bg_rect.setPen(QPen(Qt.GlobalColor.black, 1))
-        bg_rect.setZValue(100)
-    
-        # store and compose once
+        # --- get or create the label items (idempotent) ---
         if not hasattr(self, "city_labels"):
             self.city_labels = {}
-        self.city_labels[key] = text_item
-        text_item.bg_rect = bg_rect
-        text_item._name_text = name_text
-        text_item._trade_text = trade
     
-        self.scene.addItem(bg_rect)
-        self.scene.addItem(text_item)
+        item = self.city_labels.get(key)
+        if item is None:
+            item = QGraphicsTextItem()
+            font = QFont("Bookman Old Style", pointSize=8)
+            item.setFont(font)
+            item.setDefaultTextColor(Qt.GlobalColor.black)
     
-        # initial text/layout
+            bg = QGraphicsRectItem()
+            bg.setBrush(QBrush(Qt.GlobalColor.white))
+            bg.setPen(QPen(Qt.GlobalColor.black, 1))
+            bg.setZValue(100)
+    
+            item.bg_rect = bg
+            self.scene.addItem(bg)
+            self.scene.addItem(item)
+            self.city_labels[key] = item
+    
+        # cache strings on the item and layout
+        item._name_text = name_text
+        item._trade_text = trade
         self._apply_city_label_mode(city, mode)
     
-    
     def _apply_city_label_mode(self, city, mode: str | None = None):
+        """Recompose text (bold name, normal trade) and re-center above icon; avoid overlaps."""    
         mode = mode or self._get_city_label_mode()
         key = id(city)
         item = getattr(self, "city_labels", {}).get(key)
         if not item:
             return
     
-        # choose text
         name_text, trade_text = item._name_text, item._trade_text
-        text = (
-            name_text if mode == 'name' else
-            trade_text if mode == 'trade' else
-            (f"{name_text}\n{trade_text}" if name_text and trade_text else (name_text or trade_text))
-        )
-        show = (mode != 'off') and bool(text)
-        item.setVisible(show); item.bg_rect.setVisible(show)
+        fam = "Bookman Old Style"
+    
+        # Compose HTML with real paragraphs (Qt-friendly line breaks). Center both lines.
+        parts = []
+        if mode in ("name", "both") and name_text:
+            parts.append(
+                f"<p style=\"font-family:'{fam}'; font-size:8pt; font-weight:600; "
+                f"color:#000; text-align:center; margin:0;\">{esc(name_text)}</p>"
+            )
+        if mode in ("trade", "both") and trade_text:
+            parts.append(
+                f"<p style=\"font-family:'{fam}'; font-size:8pt; font-weight:400; "
+                f"color:#000; text-align:center; margin:0;\">{esc(trade_text)}</p>"
+            )
+        html = "".join(parts)
+    
+        show = (mode != "off") and bool(html)
+        item.setVisible(show)
+        item.bg_rect.setVisible(show)
         if not show:
             return
     
-        # set text & layout above city
-        item.setPlainText(text)
-        r = item.boundingRect()
-        item.bg_rect.setRect(r.x(), r.y(), r.width(), r.height())
+        # Lay out naturally (no fixed text width), then size background with padding.
+        item.setHtml(html)
+        doc = item.document()
+        doc.setDocumentMargin(0)
     
+        r = item.boundingRect()
+        padding = 2
+        item.bg_rect.setRect(
+            r.x() - padding,
+            r.y() - padding,
+            r.width() + 2 * padding,
+            r.height() + 2 * padding,
+        )
+    
+        # Preferred position (above icon, centered)
         city_item = self.city_items[key]
         city_pos, city_rect = city_item.pos(), city_item.boundingRect()
-        x = city_pos.x() + city_rect.width()/2 - r.width()/2
+        x = city_pos.x() + city_rect.width() / 2 - r.width() / 2
         y = city_pos.y() - r.height() + 6
-        item.setPos(x, y); item.setZValue(101)
+    
+        # Overlap-avoid: bump up, else down
+        def overlaps(yv: float) -> bool:
+            test = QRectF(x, yv, r.width(), r.height())
+            for ok, other in self.city_labels.items():
+                if ok == key or not other.isVisible():
+                    continue
+                orr = other.boundingRect()
+                op = other.pos()
+                if test.intersects(QRectF(op.x(), op.y(), orr.width(), orr.height())):
+                    return True
+            return False
+    
+        sr = self.scene.sceneRect()
+        step, margin = 4, 2
+        if overlaps(y):
+            y_up = y
+            while overlaps(y_up) and y_up - step >= sr.top() + margin:
+                y_up -= step
+            if overlaps(y_up):
+                y_dn = y
+                while overlaps(y_dn) and y_dn + r.height() + step <= sr.bottom() - margin:
+                    y_dn += step
+                y = y_dn
+            else:
+                y = y_up
+    
+        # Apply
+        item.setPos(x, y)
+        item.setZValue(101)
         item.bg_rect.setPos(x, y)
+
 
     def _remove_city_label(self, city):
         """Remove the name label for a city."""
@@ -3631,6 +3684,7 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
             del self.city_labels[key]
+            
     def _remove_all_city_labels(self):
         for key in self.city_labels:
             text_item = self.city_labels[key]
@@ -3725,11 +3779,13 @@ class MainWindow(QMainWindow):
         print(f"Empire border visibility: {'ON' if visible else 'OFF'}")
     
 
-    def update_all_city_label_texts_from_toggles(self):
+    def update_all_city_labels_from_toggles(self):
         mode = self._get_city_label_mode()
         for city in self.state.current_empire_object.cities:
             self._apply_city_label_mode(city, mode)
-            
+
+
+                
     def align_trade_points(self, alignment_radius: int) -> int:
         """
         Snap nearby trade points (pixel units) to a shared integer coordinate.
@@ -3831,7 +3887,7 @@ class MainWindow(QMainWindow):
             self.render_empire_border()
         
         # 3. Update visibility states based on current toggle settings
-        self.update_all_city_label_texts_from_toggles()
+        self.update_all_city_labels_from_toggles()
         self.toggle_cities_visibility()
         self.toggle_trade_routes_visibility()
         self.toggle_border_visibility()
