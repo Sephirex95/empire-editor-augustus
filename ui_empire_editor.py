@@ -71,6 +71,11 @@ class Ui_MainWindow(object):
         self.actionViewOption4.setObjectName("actionViewOption4")
         self.actionViewOption4.setCheckable(True)
         self.actionViewOption4.setChecked(False)  # Off by default
+        
+        self.actionViewOption5 = QAction(MainWindow)
+        self.actionViewOption5.setObjectName("actionViewOption5")
+        self.actionViewOption5.setCheckable(True)
+        self.actionViewOption5.setChecked(False)  # Off by default
 
         self.actionRefreshMap = QAction(MainWindow)
         self.actionRefreshMap.setObjectName("actionRefreshMap")
@@ -143,6 +148,7 @@ class Ui_MainWindow(object):
         self.menuView.addAction(self.actionViewOption2)
         self.menuView.addAction(self.actionViewOption3)
         self.menuView.addAction(self.actionViewOption4)
+        self.menuView.addAction(self.actionViewOption5)
         self.menuView.addSeparator()
         self.menuView.addAction(self.actionRefreshMap)
         # Settings
@@ -194,6 +200,7 @@ class Ui_MainWindow(object):
         self.actionViewOption2.setText(_t("MainWindow", "Show Trade Routes", None))
         self.actionViewOption3.setText(_t("MainWindow", "Show Empire Border", None))
         self.actionViewOption4.setText(_t("MainWindow", "Show Name Labels", None))
+        self.actionViewOption5.setText(_t("MainWindow", "Show Trade Labels", None))
         self.actionRefreshMap.setText(_t("MainWindow", "Refresh Map", None))
         
         self.actionGitHub_Augustus.setText(_t("MainWindow", "Augustus", None))

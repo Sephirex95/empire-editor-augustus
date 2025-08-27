@@ -309,6 +309,7 @@ class MainWindow(QMainWindow):
         self.ui.mouse_position_label.setVisible(False)  # hidden until a map is set
         self.city_items = {}  # maps City -> QGraphicsPixmapItem
         self.city_name_labels = {}  # maps City -> QGraphicsTextItem for name labels
+        self.city_trade_labels = {}
         # trade-route drawing state
         self.trade_drawing_active = False
         self.trade_is_land = True
@@ -334,7 +335,8 @@ class MainWindow(QMainWindow):
         self.editing_vertex_city = None         # City object (for trade routes only)
         self.editing_vertex_handle = None       # The handle item being dragged
         self.vertex_handle_items = []           # List of active vertex handles
-        
+        self._trade_dot_reps = []               # list[(ix, iy)] used to dedupe dots across all routes
+
         # Data/state
         self.state = ProgramState()
         self.init_failed = False
@@ -672,7 +674,7 @@ class MainWindow(QMainWindow):
     def move_city(self, city_obj):
         """Enter drag mode to move an existing city."""
         self.moving_city = city_obj
-        pm = self._pixmap_for_city(city_obj)
+        pm = self._pixmap_for_city(city_obj.city_type)
     
         # Cache the pixmap for cursor
         self.drag_pixmap = pm
@@ -919,6 +921,7 @@ class MainWindow(QMainWindow):
         # If scene has items, clear and reset (but keep background)
         if self.scene and self.bg_item:
             # Remove all items except background
+            self._trade_dot_reps = []
             for item in list(self.scene.items()):
                 if item != self.bg_item:
                     self.scene.removeItem(item)
@@ -1072,6 +1075,7 @@ class MainWindow(QMainWindow):
     
     def _find_map_image(self, image_path, xml_dir):
         """Try to find the map image in various locations relative to the XML file."""
+        filename = os.path.basename(image_path)
         if os.path.isabs(image_path) and os.path.exists(image_path):
             return image_path
         
@@ -1080,13 +1084,21 @@ class MainWindow(QMainWindow):
         if os.path.exists(rel_path):
             return rel_path
         
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+            
+        maps_path = os.path.join(base_path, "augustus_assets", "Areldir_maps", filename)
+        if os.path.exists(maps_path):
+            return maps_path
         # Try in images subdirectory
         images_path = os.path.join(xml_dir, "images", image_path)
         if os.path.exists(images_path):
             return images_path
         
         # Try just the filename in XML directory
-        filename = os.path.basename(image_path)
+
         filename_path = os.path.join(xml_dir, filename)
         if os.path.exists(filename_path):
             return filename_path
@@ -1095,6 +1107,7 @@ class MainWindow(QMainWindow):
         filename_images_path = os.path.join(xml_dir, "images", filename)
         if os.path.exists(filename_images_path):
             return filename_images_path
+        
         
         return None
     
@@ -1191,7 +1204,7 @@ class MainWindow(QMainWindow):
             return
         
         # Convert center coordinates to top-left for scene placement
-        pixmap = self._pixmap_for_city(city)
+        pixmap = self._pixmap_for_city(city.city_type)
         if not pixmap.isNull():
             top_left_x = city.x - pixmap.width() // 2
             top_left_y = city.y - pixmap.height() // 2
@@ -1244,7 +1257,7 @@ class MainWindow(QMainWindow):
         last_point = trade_route.trade_points[-1]
         
         # Get city bounds (coordinates are center-based)
-        city_pixmap = self._pixmap_for_city(city)
+        city_pixmap = self._pixmap_for_city(city.city_type)
         city_half_width = city_pixmap.width() // 2
         city_half_height = city_pixmap.height() // 2
         
@@ -1722,6 +1735,7 @@ class MainWindow(QMainWindow):
         # Clear selection state
         self.selected_item = None
         self.selected_kind = None
+        self._trade_dot_reps = []
         self.selected_edge_index = None
         self.selected_trade_route_city = None
         
@@ -1729,6 +1743,7 @@ class MainWindow(QMainWindow):
         try:
             self.city_items.clear()
             self.city_name_labels.clear()
+            self.city_trade_labels.clear()
         except Exception as e:
             print(f"{e}")
         # Clear drawing states
@@ -1847,7 +1862,7 @@ class MainWindow(QMainWindow):
             # Check if clicked on "Our City" to finish
             for city in self.state.current_empire_object.cities:
                 if city.city_type == ed.CityType.OURS:
-                    city_pixmap = self._pixmap_for_city(city)
+                    city_pixmap = self._pixmap_for_city(city.city_type)
                     city_half_width = city_pixmap.width() // 2
                     city_half_height = city_pixmap.height() // 2
                     # Check if click is within city bounds (center-based coordinates)
@@ -2071,13 +2086,13 @@ class MainWindow(QMainWindow):
                     city_item = self.city_items.get(key)
                     if city_item:
                         self._create_city_name_label(city)  # Recreate in new position
-                
+                        self._create_city_trade_label(city)
                 # Update trade route if city has one
                 if city.trade_route:
                     self.render_trade_route(city)
 
                 # Convert center coordinates to top-left for scene placement
-                pixmap = self._pixmap_for_city(city)
+                pixmap = self._pixmap_for_city(city.city_type)
                 top_left_x = x - pixmap.width() // 2
                 top_left_y = y - pixmap.height() // 2
                 self._place_city_marker(city, top_left_x, top_left_y)
@@ -2551,58 +2566,85 @@ class MainWindow(QMainWindow):
         self.trade_route_selected = True
         self.selected_trade_route_city = city
         
+    def _make_trade_dot_placer(self, dot_pm, group, placed_reps, merge_radius_px=6):
+        """Return a place_cb(x,y) that skips dots within merge_radius_px of an existing one."""
+        r2 = merge_radius_px * merge_radius_px
+    
+        def place_cb(x, y):
+            ix, iy = int(x), int(y)
+            # skip if close to an existing representative
+            for rx, ry in placed_reps:
+                dx, dy = ix - rx, iy - ry
+                if dx*dx + dy*dy <= r2:
+                    return  # too close → don't render another dot
+            # keep this one as the cluster rep and actually place it
+            placed_reps.append((ix, iy))
+            self._place_pixmap(ix, iy, dot_pm, z=5, group=group, center=True)
+        return place_cb
+        
     def render_trade_route(self, city):
-        """Render permanent trade route visuals for a specific city."""
+        """Render permanent trade route visuals for a specific city, with dot dedupe and selectable hit segments."""
         city_index = self._get_city_index(city)
         if city_index is None:
             return
-            
-        # Clear existing visuals for this city
+    
+        # clear any old visuals for this city (removes group & its children)
         self.clear_trade_route_visuals(city_index)
-        
-        #if not city.trade_route or not city.trade_route.trade_points or len(city.trade_route.trade_points) < 2:
+    
         if not city.trade_route:
             return
-            
-        # Create new group for this city's trade route
+    
+        # make a group for the route visuals
         group = QGraphicsItemGroup()
-        group.setZValue(5)  # Below city pixmaps (which use Z=10)
+        group.setZValue(5)
         self.scene.addItem(group)
         self._trade_route_groups[city_index] = group
-        
-        # Render the route
+    
+        # build the polyline points (keep start city + "our city" endpoint, like your other impl)
         pts = [(p.x, p.y) for p in city.trade_route.trade_points]
         pts.insert(0, (city.x, city.y))
         has_ours, our_city = self.state.has_our_city()
         if has_ours:
             pts.append((our_city.x, our_city.y))
+    
+        # stamp dots with global de-dup
         is_land = (city.trade_route.r_type == ed.TradeRouteType.LAND)
         dot_pm = self._get_trade_dot_pixmap(is_land)
-        
-        if not dot_pm.isNull():
-            def place_trade_dot(x, y):
-                self._place_pixmap(x, y, dot_pm, z=5, group=group, center=True)
-            self._stamp_along_polyline(pts, spacing=12, place_cb=place_trade_dot, include_ends=True)
-        
-        # Add invisible hit areas for each segment (similar to border)
     
-        for i in range(len(pts) -1):
+        if not dot_pm.isNull():
+            reps = getattr(self, "_trade_dot_reps", [])
+            r2 = 6 * 6  # merge radius ~ dot diameter
+    
+            def place_trade_dot(x, y):
+                ix, iy = int(x), int(y)
+                for rx, ry in reps:
+                    dx, dy = ix - rx, iy - ry
+                    if dx*dx + dy*dy <= r2:
+                        return  # too close—skip
+                reps.append((ix, iy))
+                self._place_pixmap(ix, iy, dot_pm, z=5, group=group, center=True)
+    
+            self._stamp_along_polyline(pts, spacing=12, place_cb=place_trade_dot, include_ends=True)
+
+        # ALWAYS add wide, invisible hit segments so the route is selectable/editable
+        for i in range(len(pts) - 1):
             try:
                 p0 = self._img_to_scene(pts[i][0], pts[i][1])
                 p1 = self._img_to_scene(pts[i+1][0], pts[i+1][1])
                 hit = QGraphicsLineItem(p0.x(), p0.y(), p1.x(), p1.y())
-                hit.setPen(QPen(Qt.transparent, 12))  # Wide invisible hit area
-                hit.setZValue(6)  # Above trade dots but below selection
+                hit.setPen(QPen(Qt.transparent, 12))  # wide click target
+                hit.setZValue(6)                      # above dots, below overlays
                 hit.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                hit.setData(Qt.ItemDataRole.UserRole, "TRADE_ROUTE")  # Mark as trade route
-                hit.setData(Qt.ItemDataRole.UserRole + 1, city_index)  # Store city index
-                hit.setData(Qt.ItemDataRole.UserRole + 2, i)  # Store segment index
+                hit.setData(Qt.ItemDataRole.UserRole, "TRADE_ROUTE")
+                hit.setData(Qt.ItemDataRole.UserRole + 1, city_index)  # city idx
+                hit.setData(Qt.ItemDataRole.UserRole + 2, i)           # segment idx
                 group.addToGroup(hit)
                 self.trade_route_hit_items.append(hit)
             except Exception as e:
-                # Fallback if QGraphicsLineItem fails for some reason
                 print(f"Error creating trade route hit items: {e}")
                 continue
+
+
     # ==== edge/border drawing (temp) ===========================================
     
     def _begin_edge_drawing(self, x_img: int, y_img: int):
@@ -2880,33 +2922,16 @@ class MainWindow(QMainWindow):
         # alive iff we have an object AND it still belongs to a scene
         return self.no_bg_item is not None and self.no_bg_item.scene() is not None
     
-    def _pixmap_for_city(self, city) -> QPixmap:
-        # this should be adjusted, its GPTs hypochondria checking a million things instead of inheriting values
-        # 1) Otherwise, try the currently selected item (if any) — use native pixmap size
-        if self.selected_item is not None:
-            try:
-                icon = self.selected_item.icon()
-                sizes = icon.availableSizes()
-                if sizes:
-                    # pick the largest native size available (still unscaled)
-                    nat = max(sizes, key=lambda s: s.width() * s.height())
-                    return icon.pixmap(nat)
-            except Exception:
-                pass
-    
-        # 2) Fallback by city.city_type -> EmpCityTypes kind (no scaling)
-        ct = city.city_type
+    def _pixmap_for_city(self, ctype) -> QPixmap:
         for el in self.state.elements:
-            if el["kind"] == ct:
+            if el["kind"] == ctype:
                 # keep original image size from your PIL source
                 return self.pil_to_qpixmap(el["pil"])
-        # Ultimate fallback: return a null pixmap (no assumed size)
         return QPixmap()
-
 
     def _place_city_marker(self, city, x, y):
         """Place a city marker at the given top-left coordinates (x, y are top-left for scene placement)."""
-        pm = self._pixmap_for_city(city)
+        pm = self._pixmap_for_city(city.city_type)
         if self.bg_item is None:
             return
         scene_pt = self.bg_item.mapToScene(x, y)
@@ -2943,6 +2968,7 @@ class MainWindow(QMainWindow):
         
         # Create and add name label if needed
         self._create_city_name_label(city)
+        self._create_city_trade_label(city)
 
     def _apply_item_interactivity(self, item, enable: bool):
         item.setAcceptHoverEvents(enable)
@@ -3448,8 +3474,8 @@ class MainWindow(QMainWindow):
         self._place_city_on_scene(city)
         
         # Create name label if name labels are visible
-        if hasattr(self.ui, 'actionViewOption4') and self.ui.actionViewOption4.isChecked():
-            self._create_city_name_label(city)
+        self._create_city_name_label(city)
+        self._create_city_trade_label(city)
         
         # Update default cities menu state
         self._update_default_cities_menu_state()
@@ -3464,6 +3490,10 @@ class MainWindow(QMainWindow):
         x, y = xy
 
         kind = self.selected_kind
+        ctype = ed.CityType(kind)
+        pixmap = self._pixmap_for_city(ctype)
+        top_left_x = x - pixmap.width() // 2
+        top_left_y = y - pixmap.height() // 2
 
         # OUR city: single instance with move-confirmation
         if kind == ed.CityType.OURS:
@@ -3486,10 +3516,10 @@ class MainWindow(QMainWindow):
             return
 
         # Other city types: create freely
-        ctype = ed.CityType(kind)
+        
         default_name = ed.CityType(kind).value
         # Store center coordinates in city data
-        city = ed.City(name=default_name, x=x, y=y, city_type=ctype, sells=[])
+        city = ed.City(name=default_name, x=top_left_x, y=top_left_y, city_type=ctype, sells=[])
         if ctype in (ed.CityType.TRADE,ed.CityType.FUTURE_TRADE):
             city.trade_route = ed.TradeRoute(cost = 500, r_type = ed.TradeRouteType.LAND)
         self._add_city_to_empire(city, force_add=True)
@@ -3568,7 +3598,81 @@ class MainWindow(QMainWindow):
         visible = hasattr(self.ui, 'actionViewOption4') and self.ui.actionViewOption4.isChecked()
         text_item.setVisible(visible)
         bg_rect.setVisible(visible)
+        
+    def _create_city_trade_label(self, city):
+        """Create a trade label (buys/sells info) positioned below the city icon."""
+        sells = [str(x) for x in city.sells if x]
+        buys= [str(x) for x in city.buys if x]
+        parts = []
+        if sells: parts.append("S: " + ", ".join(sells))
+        if buys:  parts.append("B: " + ", ".join(buys))
+        text = " | ".join(parts)
+            
+        key = id(city)
     
+        # Find the city item
+        if key not in self.city_items:
+            return  # No visual city item exists
+        city_item = self.city_items[key]
+    
+        # Remove existing label if it exists
+        if key in self.city_trade_labels:
+            old_label = self.city_trade_labels[key]
+            try:
+                self.scene.removeItem(old_label)
+                self.scene.removeItem(old_label.bg_rect)
+            except RuntimeError:
+                pass
+            del self.city_trade_labels[key]
+    
+        # Create text item
+        text_item = QGraphicsTextItem(text)
+        font = QFont("Bookman Old Style", pointSize=7)  # slightly smaller font
+        font.setItalic(True)
+        text_item.setFont(font)
+        text_item.setDefaultTextColor(Qt.GlobalColor.darkBlue)
+    
+        # Create background rectangle
+        text_rect = text_item.boundingRect()
+        padding = 1
+        bg_rect = QGraphicsRectItem(
+            text_rect.x(),
+            text_rect.y(),
+            text_rect.width(),
+            text_rect.height(),
+        )
+    
+        # Style the background
+        bg_rect.setBrush(QBrush(Qt.GlobalColor.white))
+        bg_rect.setPen(QPen(Qt.GlobalColor.black, 1))
+        bg_rect.setZValue(100)
+    
+        # Position below the city icon
+        city_pos = city_item.pos()
+        city_rect = city_item.boundingRect()
+    
+        label_x = city_pos.x() + city_rect.width() / 2 - text_rect.width() / 2
+        label_y = city_pos.y() + city_rect.height() + padding  # just under the icon
+    
+        bg_rect.setPos(label_x - padding, label_y - padding)
+        text_item.setPos(label_x, label_y)
+        text_item.setZValue(101)
+    
+        # Add to scene
+        self.scene.addItem(bg_rect)
+        self.scene.addItem(text_item)
+    
+        # Store both items
+        text_item.bg_rect = bg_rect
+        if not hasattr(self, "city_trade_labels"):
+            self.city_trade_labels = {}
+        self.city_trade_labels[key] = text_item
+    
+        # Apply visibility state (hooked to a separate menu action)
+        visible = hasattr(self.ui, 'actionViewOption5') and self.ui.actionViewOption5.isChecked()
+        text_item.setVisible(visible)
+        bg_rect.setVisible(visible)
+
     def _remove_city_name_label(self, city):
         """Remove the name label for a city."""
         key = id(city)
@@ -3583,6 +3687,25 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
             del self.city_name_labels[key]
+    def remove_city_trade_label(self, city):
+        """Remove the trade label (if any) for a specific city."""
+        if not hasattr(self, "city_trade_labels"):
+            return
+    
+        key = id(city)
+        if key in self.city_trade_labels:
+            label_item = self.city_trade_labels[key]
+            try:
+                # Remove from scene
+                self.scene.removeItem(label_item)
+                if hasattr(label_item, "bg_rect"):
+                    self.scene.removeItem(label_item.bg_rect)
+            except RuntimeError:
+                # Item might already be deleted
+                pass
+    
+            # Drop Python references
+            del self.city_trade_labels[key]
 
     # -------------------------------------------------------
     # View Options Toggle Methods
@@ -3685,7 +3808,75 @@ class MainWindow(QMainWindow):
                 pass
         
         print(f"City name labels visibility: {'ON' if visible else 'OFF'}")
-
+        
+    def toggle_trade_labels_visibility(self):
+        """Toggle visibility of city name labels."""
+        visible = self.ui.actionViewOption5.isChecked()
+        
+        for text_item in self.city_trade_labels.values():
+            try:
+                text_item.setVisible(visible)
+                # Also toggle background rectangle
+                if hasattr(text_item, 'bg_rect'):
+                    text_item.bg_rect.setVisible(visible)
+            except RuntimeError:
+                # Item was deleted, skip
+                pass
+    def align_trade_points(self, alignment_radius: int) -> int:
+        """
+        Snap nearby trade points (pixel units) to a shared integer coordinate.
+    
+        For each trade point across all cities, if it's within `alignment_radius`
+        (in pixels) of a previously-seen representative, set its (x, y) exactly
+        to that representative's coords. Otherwise it becomes a new representative.
+    
+        Returns:
+            int: number of points whose coordinates changed.
+        """
+        # Collect a global list of all trade-point objects
+        all_points = []
+        for city in self.state.current_empire_object.cities:
+            tr = city.trade_route
+            if tr and tr.trade_points is not None:
+                all_points.extend(tr.trade_points)
+    
+        if not all_points or alignment_radius <= 0:
+            return 0
+    
+        r2 = alignment_radius * alignment_radius
+        moved = 0
+    
+        # Representatives (int coords)
+        reps: list[tuple[int, int]] = []
+    
+        for p in all_points:
+            # Ensure integer coords locally (we'll also coerce p if needed)
+            px = int(p.x)
+            py = int(p.y)
+    
+            snapped = False
+            for rx, ry in reps:
+                dx = px - rx
+                dy = py - ry
+                if dx * dx + dy * dy <= r2:
+                    # Snap to representative if different
+                    if p.x != rx or p.y != ry:
+                        p.x = rx
+                        p.y = ry
+                        moved += 1
+                    snapped = True
+                    break
+    
+            if not snapped:
+                # New representative; also coerce point to integer coords if needed
+                reps.append((px, py))
+                if p.x != px or p.y != py:
+                    p.x = px
+                    p.y = py
+                    moved += 1
+    
+        return moved
+        
     def refresh_map(self):
         """Refresh and re-render all map elements (F5)."""
         print("Refreshing map...")
@@ -3699,10 +3890,15 @@ class MainWindow(QMainWindow):
         # Clear all visual elements except background
         if self.scene and self.bg_item:
             # Remove all items except background
+            
             for item in list(self.scene.items()):
                 if item != self.bg_item:
                     self.scene.removeItem(item)
-        
+        self._trade_dot_reps = []
+                    
+        snapping_variable = 5
+        moved = self.align_trade_points(snapping_variable)
+
         # Clear internal state
         self.city_items.clear()
         self.city_name_labels.clear()
@@ -3711,19 +3907,19 @@ class MainWindow(QMainWindow):
         # Re-render all empire elements
         
         # 1. Re-render cities
-        if hasattr(empire, 'cities'):
-            for city in empire.cities:
-                self._place_city_on_scene(city)
-                
-                # Always create name labels (visibility will be controlled by toggle)
-                self._create_city_name_label(city)
-                
-                # Re-render trade routes
-                if city.trade_route is not None:
-                    self.render_trade_route(city)
+
+        for city in empire.cities:
+            self._place_city_on_scene(city)
+            
+            # Always create name labels (visibility will be controlled by toggle)
+            self._create_city_name_label(city)
+            self._create_city_trade_label(city)
+            # Re-render trade routes
+            if city.trade_route is not None:
+                self.render_trade_route(city)
         
         # 2. Re-render empire border if enabled
-        if self.ui.actionViewOption3.isChecked() and hasattr(empire, 'border') and empire.border:
+        if empire.border:
             self.empire_border = True
             self.render_empire_border()
         
@@ -3732,10 +3928,16 @@ class MainWindow(QMainWindow):
         self.toggle_trade_routes_visibility()
         self.toggle_border_visibility()
         self.toggle_name_labels_visibility()
+        self.toggle_trade_labels_visibility()
         
         # 4. Repopulate Default Cities menu
         self.populate_default_cities_menu()
-        
+        if moved > 0:
+            self.has_unsaved_changes = True
+            QMessageBox.information(
+                self, "Tradepoints aligned", f"Snapped {moved} tradepoints to their neighbours",
+                QMessageBox.StandardButton.Ok
+            )
         print("Map refresh completed")
     def populate_default_cities_menu(self):
         """Populate the Default Cities menu with hierarchical regions and cities from JSON."""

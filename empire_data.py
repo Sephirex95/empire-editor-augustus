@@ -7,7 +7,8 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 
 # Global header comment for exported files
-EMPIRE_EDITOR_HEADER = """Made with EmpireEditor for Augustus by Sephirex95
+EMPIRE_EDITOR_HEADER = """[empire_editor_version = x]
+Made with EmpireEditor for Augustus by Sephirex95
 https://github.com/Sephirex95/empire-editor-augustus
 Empire maps made and generously shared by Areldir"""
 
@@ -128,7 +129,6 @@ class TradeRoute:
     cost: int
     r_type: TradeRouteType
     trade_points: List[TradePoint] = field(default_factory=list)
-
 
 @dataclass
 class City:
