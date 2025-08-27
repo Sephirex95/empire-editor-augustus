@@ -285,8 +285,8 @@ class Empire:
                 buys_el = SubElement(c_el, "buys")
                 for r in c.buys:
                     r_el = SubElement(buys_el, "resource")
-                    r_el.set("type", r.resource_type)
-                    if r.amount not in (None, 1):
+                    r_el.set("type", ResourceType(r.resource_type).value)
+                    if r.amount is not None:
                         r_el.set("amount", str(r.amount))
 
             if c.sells:
@@ -295,7 +295,7 @@ class Empire:
                 for r in c.sells:
                     r_el = SubElement(sells_el, "resource")
                     r_el.set("type", ResourceType(r.resource_type).value)
-                    if not omit_amount and r.amount not in (None, 1):
+                    if not omit_amount and r.amount is not None:
                         r_el.set("amount", str(r.amount))
         
         # Ensure cities element is never self-closing by adding text content
