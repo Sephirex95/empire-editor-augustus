@@ -70,6 +70,7 @@ jobs:
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
           APP_NAME="EmpireEditor"
           if [ -f "dist/${APP_NAME}.exe" ]; then
