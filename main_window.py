@@ -1939,8 +1939,9 @@ class MainWindow(QMainWindow):
                 top_left_x = x - pixmap.width() // 2
                 top_left_y = y - pixmap.height() // 2
                 self._place_city_marker(city, top_left_x, top_left_y)
-                if city.city_type == ed.CityType.OURS:
-                    self.refresh_map()
+                self.refresh_map() #handle all route updates and stuff
+
+                    
             return
         else:
             # Unified entry point now
@@ -2847,7 +2848,7 @@ class MainWindow(QMainWindow):
             # let Qt delete C++ object; don't keep stale refs
         
         # Remove name label
-        self._remove_city_name_label(city)
+        self._remove_city_label(city)
 # %% No-background message
     def show_no_background_message(self):
         """Show the placeholder text when no background is set."""
