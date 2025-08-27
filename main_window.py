@@ -3424,6 +3424,7 @@ class MainWindow(QMainWindow):
                 empire_image = empire_image[0]
 
             self.set_background_image(empire_image)
+            self.bg_type = ed.EmpBackgroundTypes.LEGACY
         else:
             QMessageBox.warning(self, "Missing Map",
                                 "The 'Default Empire Map' is not available in the loaded images.",
