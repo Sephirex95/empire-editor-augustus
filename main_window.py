@@ -44,11 +44,15 @@ class ProgramState:
         self.city_icons_map = {}
         self.init_failed = False
         self.c3_main_path = ""
+        self.augustus_user_path = ""
+        self.augustus_editor_empires_path = ""
+        self.augustus_community_image_path = ""
         self.current_empire_object  = None
     def init(self):
         if not self.load_c3_folder():
             self.init_failed = True
             return False
+        self.select_augustus_user_directory()
         self.load_images()
         return not self.init_failed
 
@@ -133,7 +137,111 @@ class ProgramState:
                 QMessageBox.StandardButton.Ok
             )
             return False
-        return True
+            return True
+    def select_augustus_user_directory(self) -> bool:
+        """
+        Politely ask the user if they'd like to select their Augustus *user* directory.
+        - Stores the path in QSettings under 'augustus_user_folder'
+        - Sets self.augustus_user_path on success
+        - Returns True if a valid directory is stored/confirmed, False otherwise
+        """
+        config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
+        settings = QSettings(config_path, QSettings.Format.IniFormat)
+    
+        # If already configured and still exists, we're done.
+        existing = settings.value("augustus_user_folder", type=str)
+        if existing and os.path.isdir(existing):
+            self.augustus_user_path = existing
+            return True
+    
+        # If there was a stale path, let the user know (without forcing them).
+        if existing and not os.path.isdir(existing):
+            print(f"Previously configured Augustus user folder '{existing}' no longer exists.")
+    
+        # Ask nicely (do not force selection).
+        reply = QMessageBox.question(
+            None,
+            "Select Augustus User Directory",
+            "Would you like to select your Augustus user directory?\n\n"
+            "This will help sync your Augustus and map editor with the Empire Editor outputs.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+    
+        if reply != QMessageBox.StandardButton.Yes:
+            # User declined; that's okay—just return False to signal nothing was set.
+            return False
+    
+        # Let the user pick a directory (optional, but requested).
+        folder = QFileDialog.getExistingDirectory(
+            None,
+            "Select Augustus User Directory",
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+    
+        if not folder:
+            # User cancelled the file dialog; nothing selected.
+            return False
+    
+        if self.validate_augustus_user_directory(folder):
+            settings.setValue("augustus_user_folder", folder)
+            self.augustus_user_path = folder
+            self.augustus_community_image_path = os.path.join(folder, "community", "image")
+            self.augustus_editor_empires_path = os.path.join(folder, "editor", "empires")
+            return True
+    
+        # Folder chosen but failed validation.
+        QMessageBox.critical(
+            None,
+            "Invalid Directory",
+            "Please select a valid Augustus user directory.",
+            QMessageBox.StandardButton.Ok
+        )
+        return False
+    
+    
+    def validate_augustus_user_directory(self, path: str) -> bool:
+        """
+        Validate an Augustus *user* directory.
+        Because user directories differ by OS/installs, we accept the directory if it
+        contains at least one recognizable Augustus user artifact.
+    
+        Accepted markers (any one is enough):
+          - A 'maps', 'saves', 'savegames', or 'mods' subfolder
+    
+        Shows a message box listing what was expected when validation fails.
+        """
+        if not path or not os.path.isdir(path):
+            QMessageBox.critical(
+                None,
+                "Invalid Directory",
+                "The selected path is not a directory.",
+                QMessageBox.StandardButton.Ok
+            )
+            return False
+    
+        expected_dirs = ["editor", "community", "savegames"]
+    
+        has_dir_marker = any(os.path.isdir(os.path.join(path, d)) for d in expected_dirs)
+
+    
+        if has_dir_marker:
+            return True
+    
+        # Nothing recognizable found; explain what we looked for.
+        missing_msg = (
+            "The selected folder does not look like an Augustus user directory.\n\n"
+            "Have not found the following subfolders:\n"
+            f" {', '.join(expected_dirs)}\n"
+        )
+        QMessageBox.warning(
+            None,
+            "Missing Expected Items",
+            missing_msg,
+            QMessageBox.StandardButton.Ok
+        )
+        return False
 
     def load_images(self):
         if self.c3_main_path:
@@ -593,72 +701,118 @@ class MainWindow(QMainWindow):
                 self, "Load Error", f"Failed to load empire:\n{str(e)}",
                 QMessageBox.StandardButton.Ok
             )
-
+                
     def save_empire_xml(self):
-        """Save current empire to XML file."""
+        """Save current empire to XML file, optionally into Augustus user folders if configured."""
+        import re
+    
+        # Warn about 'Our City' but let the user decide
         our_city_exists, _ = self.state.has_our_city()
         if not our_city_exists:
-            QMessageBox.warning(
-                self, "Our City", "'Our City' is not set, the empire can function incorrectly.\n are you sure you want to save?",
+            reply = QMessageBox.question(
+                self,
+                "Our City",
+                "'Our City' is not set; the empire may function incorrectly.\n\nAre you sure you want to save?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
-            if QMessageBox.StandardButton.No:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
+    
         if not self.state.check_if_empire():
             QMessageBox.warning(
                 self, "No Empire", "No empire to save. Create an empire first.",
                 QMessageBox.StandardButton.Ok
             )
             return
-        
-        # Get default save folder from settings
+    
+        # Read default folder from settings (fallback to CWD)
         config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
         settings = QSettings(config_path, QSettings.Format.IniFormat)
-        default_folder = settings.value("default_save_folder", type=str)
-        
-        # If no default folder is set, use current directory
-        if not default_folder:
-            default_folder = os.getcwd()
-        
-        # Ensure the default folder exists
+        default_folder = settings.value("default_save_folder", type=str) or os.getcwd()
         if not os.path.exists(default_folder):
             default_folder = os.getcwd()
-        
+    
+        # Detect Augustus user folders (set by your earlier flow)
+        aug_user = self.state.augustus_user_path
+        aug_emp_dir = self.state.augustus_editor_empires_path 
+        aug_img_dir = self.state.augustus_community_image_path
+    
+        use_augustus_dirs = False
+        if aug_user and os.path.isdir(aug_user) and aug_emp_dir and aug_img_dir:
+            reply = QMessageBox.question(
+                self,
+                "Save to Augustus directory",
+                "Augustus user directory is set.\n\n"
+                "Would you like to save to the Augustus user directories?\n"
+                "• XML → editor/empires\n"
+                "• Image → community/image",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                use_augustus_dirs = True
+    
+        # Choose the folder the file dialog should open in
+        initial_dir = aug_emp_dir if use_augustus_dirs else default_folder
+    
+        # Suggest a sensible filename
+        if getattr(self, "current_file_path", None):
+            suggested_name = os.path.splitext(os.path.basename(self.current_file_path))[0] + ".xml"
+        else:
+            # Use the empire's name if available
+            name = ""
+            try:
+                name = getattr(self.state.current_empire_object, "name", "") or ""
+            except Exception:
+                pass
+            name = re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_") if name else "empire"
+            suggested_name = f"{name}.xml"
+    
+        suggested_path = os.path.join(initial_dir, suggested_name)
+    
+        # Save As dialog (still allows user to rename/choose)
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Empire XML", default_folder, "XML Files (*.xml);;All Files (*)"
+            self,
+            "Save Empire XML",
+            suggested_path,
+            "XML Files (*.xml);;All Files (*)"
         )
         if not file_path:
             return  # User cancelled
-        
-        # Add .xml extension if not present
-        if not file_path.lower().endswith('.xml'):
-            file_path += '.xml'
-        
+    
+        # Ensure .xml
+        if not file_path.lower().endswith(".xml"):
+            file_path += ".xml"
+    
+        # Guarantee the folder exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
         try:
-            # Generate XML and save to file
+            # Prepare map info; if saving in Augustus mode, put images in aug_img_dir
             empire = self.state.current_empire_object
-            
-            # Update map_info based on current background before saving
-            self._prepare_empire_map_info_for_save(empire, file_path)
-            
+            img_dir_override = aug_img_dir if use_augustus_dirs else ""
+            self._prepare_empire_map_info_for_save(empire, file_path, img_dir_override)
+    
+            # Write XML
             empire.write_xml(file_path)
-            
-            # Update file state and window title
+    
+            # Update state/UI
             self.current_file_path = file_path
             self.has_unsaved_changes = False
             self.update_window_title()
-            
+    
             QMessageBox.information(
                 self, "Success", f"Empire saved to {file_path}",
                 QMessageBox.StandardButton.Ok
             )
-            
+    
         except Exception as e:
             QMessageBox.critical(
                 self, "Save Error", f"Failed to save empire:\n{str(e)}",
                 QMessageBox.StandardButton.Ok
             )
+
             
     def remove_city(self, city):
         """Remove a city from the empire and scene."""
@@ -846,56 +1000,59 @@ class MainWindow(QMainWindow):
             empire.map_info.coordinates_y_offset = 0
 
 
-
-    def _prepare_empire_map_info_for_save(self, empire, file_path):
-        """Update empire map_info based on current background before saving."""
+    def _prepare_empire_map_info_for_save(self, empire, file_path, img_path: str = "", xml_path: str = ""):
+        """Update empire map_info based on current background before saving.
+    
+        If img_path is provided, images are written there (e.g., Augustus 'community/image').
+        Otherwise they go to '<xml_dir>/image'.
+        """
         if not self.bg_item or self.bg_type == ed.EmpBackgroundTypes.LEGACY:
             # For legacy backgrounds or no background, keep version 1 format
             empire.version = 1
             empire.map_info = None
             return
-        
+    
         # For custom backgrounds, set up map_info for version 2+
         empire.version = 2
-        
+    
         pixmap = self.bg_item.pixmap()
         if pixmap.isNull():
             empire.map_info = None
             return
-        
-        # Get the directory where the XML file will be saved
+    
+        # Where the XML will live
         xml_dir = os.path.dirname(file_path)
-        images_dir = os.path.join(xml_dir, 'images')
-        
+
+        images_dir = img_path if img_path else os.path.join(xml_dir, 'image')
+    
         # Create images directory if it doesn't exist
         if not os.path.exists(images_dir):
-            os.makedirs(images_dir)
-        
-        # Get the filename from the current image path
+            os.makedirs(images_dir, exist_ok=True)
+    
+        # Determine the filename of the source image we're currently using
         if hasattr(self, '_current_image_path') and self._current_image_path:
             image_filename = os.path.basename(self._current_image_path)
             source_path = self._current_image_path
         else:
-            # If no known image path, use a default name
             image_filename = "background.png"
             source_path = None
-        
-        # Target path in the images folder
+    
+        # Target path in the chosen images folder
         target_path = os.path.join(images_dir, image_filename)
-        
-        # Copy the image file if it doesn't already exist and we have a source
+    
+        # Copy the image file if we have a source and target doesn't exist
         if source_path and os.path.exists(source_path) and not os.path.exists(target_path):
             try:
                 shutil.copy2(source_path, target_path)
                 print(f"Copied background image to: {target_path}")
             except Exception as e:
                 print(f"Warning: Could not copy image file: {e}")
-        
+    
         # Create or update map_info
         if empire.map_info is None:
             empire.map_info = ed.Map()
-        
-        # Set image path to just the filename (game engine requirement)
+    
+        # Game engine requirement: just the filename
         empire.map_info.image = image_filename
         empire.map_info.width = pixmap.width()
         empire.map_info.height = pixmap.height()
@@ -904,7 +1061,7 @@ class MainWindow(QMainWindow):
         empire.map_info.coordinates_relative = False
         empire.map_info.coordinates_x_offset = 0
         empire.map_info.coordinates_y_offset = 0
-        
+    
         print(f"Updated empire map_info: {image_filename} ({pixmap.width()}x{pixmap.height()})")
 
     def _render_loaded_empire(self):
