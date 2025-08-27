@@ -7,7 +7,7 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 import re
 
-EDITOR_VERSION: float = 0.21          # bump here
+EDITOR_VERSION: float = 0.25          # bump here
 EDITOR_SIGNATURE = "sephirex95"       # legacy header marker
 
 def get_editor_version() -> float:
@@ -32,7 +32,6 @@ def _extract_editor_version(xml_text: str, root) -> float | None:
             m = re.match(r"^\d+(?:\.\d+)?$", attr.strip())
             if m:
                 return float(m.group(0))
-    # header: [empire_editor_version = 0.21]
     m = re.search(r"\[\s*empire_editor_version\s*=\s*(\d+(?:\.\d+)?)\s*\]", xml_text, re.IGNORECASE)
     if m:
         return float(m.group(1))
