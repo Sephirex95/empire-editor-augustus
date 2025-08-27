@@ -1854,6 +1854,7 @@ class MainWindow(QMainWindow):
                     # Check if click is within city bounds (center-based coordinates)
                     if (city.x - city_half_width <= x <= city.x + city_half_width and 
                         city.y - city_half_height <= y <= city.y + city_half_height):
+                        self._trade_undo_last_point() 
                         self._finalize_trade_route(success=True, reopen_dialog=True)
                         return True
                     break
@@ -1863,6 +1864,7 @@ class MainWindow(QMainWindow):
             if hit_idx == len(self.trade_drawing_points) - 2 and len(self.trade_drawing_points) >= 2:
                 resp = self._show_incomplete_trade_route_dialog()
                 if resp == QMessageBox.StandardButton.Yes:
+                    self._trade_undo_last_point() 
                     self._finalize_trade_route(success=True)
                 elif resp == QMessageBox.StandardButton.No:
                     self._abort_trade_drawing()
@@ -2060,21 +2062,7 @@ class MainWindow(QMainWindow):
             if xy is not None:
                 x, y = xy
                 self._remove_city_marker(city)
-                
-                # Store old position for comparison
-                #old_x, old_y = city.x, city.y
-                
-                # If this is "Our City", find all trade routes that end at it BEFORE moving
-                affected_cities = []
-                if city.city_type == ed.CityType.OURS:
-                    empire = self.state.current_empire_object
-                    if empire and hasattr(empire, 'cities'):
-                        for other_city in empire.cities:
-                            if (other_city != city and 
-                                other_city.trade_route and 
-                                self._trade_route_ends_at_city(other_city.trade_route, city)):
-                                affected_cities.append(other_city)
-                
+
                 # Convert scene position to center coordinates (city coordinates are centers)
                 city.x, city.y = x, y
                 
@@ -2086,34 +2074,16 @@ class MainWindow(QMainWindow):
                         self._create_city_name_label(city)  # Recreate in new position
                 
                 # Update trade route if city has one
-                if city.trade_route and city.trade_route.trade_points:
-                    # Get new center coordinates (already stored as center)
-                    center_x, center_y = city.x, city.y
-                    
-                    # Insert new center point at the beginning of trade route
-                    new_point = ed.TradePoint(x=center_x, y=center_y)
-                    city.trade_route.trade_points.insert(0, new_point)
-                    
-                    # Re-render the trade route
+                if city.trade_route:
                     self.render_trade_route(city)
-                
-                # Update all affected trade routes that ended at the old Our City position
-                if affected_cities:
-                    new_center_x, new_center_y = city.x, city.y
-                    
-                    for other_city in affected_cities:
-                        # Add new endpoint to match new Our City position
-                        new_endpoint = ed.TradePoint(x=new_center_x, y=new_center_y)
-                        other_city.trade_route.trade_points.append(new_endpoint)
-                        
-                        # Re-render the updated trade route
-                        self.render_trade_route(other_city)
-                
+
                 # Convert center coordinates to top-left for scene placement
                 pixmap = self._pixmap_for_city(city)
                 top_left_x = x - pixmap.width() // 2
                 top_left_y = y - pixmap.height() // 2
                 self._place_city_marker(city, top_left_x, top_left_y)
+                if city.city_type == ed.CityType.OURS:
+                    self.refresh_map()
             return
         else:
             # Unified entry point now
@@ -2591,7 +2561,8 @@ class MainWindow(QMainWindow):
         # Clear existing visuals for this city
         self.clear_trade_route_visuals(city_index)
         
-        if not city.trade_route or not city.trade_route.trade_points or len(city.trade_route.trade_points) < 2:
+        #if not city.trade_route or not city.trade_route.trade_points or len(city.trade_route.trade_points) < 2:
+        if not city.trade_route:
             return
             
         # Create new group for this city's trade route
@@ -2602,17 +2573,20 @@ class MainWindow(QMainWindow):
         
         # Render the route
         pts = [(p.x, p.y) for p in city.trade_route.trade_points]
+        pts.insert(0, (city.x, city.y))
+        _, our_city = self.state.has_our_city()
+        pts.append((our_city.x, our_city.y))
         is_land = (city.trade_route.r_type == ed.TradeRouteType.LAND)
         dot_pm = self._get_trade_dot_pixmap(is_land)
         
         if not dot_pm.isNull():
             def place_trade_dot(x, y):
                 self._place_pixmap(x, y, dot_pm, z=5, group=group, center=True)
-            self._stamp_along_polyline(pts, spacing=15, place_cb=place_trade_dot, include_ends=True)
+            self._stamp_along_polyline(pts, spacing=12, place_cb=place_trade_dot, include_ends=True)
         
         # Add invisible hit areas for each segment (similar to border)
     
-        for i in range(len(pts) - 1):
+        for i in range(len(pts) -1):
             try:
                 p0 = self._img_to_scene(pts[i][0], pts[i][1])
                 p1 = self._img_to_scene(pts[i+1][0], pts[i+1][1])
@@ -3519,7 +3493,10 @@ class MainWindow(QMainWindow):
         default_name = ed.CityType(kind).value
         # Store center coordinates in city data
         city = ed.City(name=default_name, x=x, y=y, city_type=ctype, sells=[])
+        if ctype in (ed.CityType.TRADE,ed.CityType.FUTURE_TRADE):
+            city.trade_route = ed.TradeRoute(cost = 500, r_type = ed.TradeRouteType.LAND)
         self._add_city_to_empire(city, force_add=True)
+        self.render_trade_route(city)
 
     # -------------------------------------------------------
     # City Name Label Management
