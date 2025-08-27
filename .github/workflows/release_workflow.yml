@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'v02'
+        description: 'Release Tag'
         required: true
       release_name:
         description: 'Release title'
@@ -56,6 +56,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build with PyInstaller
+        shell: bash
         run: |
           if [ -f EmpireEditor.spec ]; then
             pyinstaller --noconfirm --clean EmpireEditor.spec
