@@ -267,36 +267,36 @@ class Empire:
             c_el.set("x", str(c.x))
             c_el.set("y", str(c.y))
             c_el.set("type", CityType(c.city_type).value)
-
-            if c.trade_route is not None:
-                tr = c.trade_route
-                if tr.cost is not None:
-                    c_el.set("trade_route_cost", str(tr.cost))
-                if tr.r_type is not None:
-                    c_el.set("trade_route_type", tr.r_type)
-                if tr.trade_points:
-                    tp_el = SubElement(c_el, "trade_points")
-                    for p in tr.trade_points:
-                        pt = SubElement(tp_el, "point")
-                        pt.set("x", str(p.x))
-                        pt.set("y", str(p.y))
-
-            if c.buys:
-                buys_el = SubElement(c_el, "buys")
-                for r in c.buys:
-                    r_el = SubElement(buys_el, "resource")
-                    r_el.set("type", ResourceType(r.resource_type).value)
-                    if r.amount is not None:
-                        r_el.set("amount", str(r.amount))
-
-            if c.sells:
-                sells_el = SubElement(c_el, "sells")
-                omit_amount = (c.city_type == CityType.OURS)
-                for r in c.sells:
-                    r_el = SubElement(sells_el, "resource")
-                    r_el.set("type", ResourceType(r.resource_type).value)
-                    if not omit_amount and r.amount is not None:
-                        r_el.set("amount", str(r.amount))
+            if c.city_type in (CityType.OURS, CityType.TRADE, CityType.FUTURE_TRADE):
+                if c.trade_route is not None:
+                    tr = c.trade_route
+                    if tr.cost is not None:
+                        c_el.set("trade_route_cost", str(tr.cost))
+                    if tr.r_type is not None:
+                        c_el.set("trade_route_type", tr.r_type)
+                    if tr.trade_points:
+                        tp_el = SubElement(c_el, "trade_points")
+                        for p in tr.trade_points:
+                            pt = SubElement(tp_el, "point")
+                            pt.set("x", str(p.x))
+                            pt.set("y", str(p.y))
+    
+                if c.buys:
+                    buys_el = SubElement(c_el, "buys")
+                    for r in c.buys:
+                        r_el = SubElement(buys_el, "resource")
+                        r_el.set("type", ResourceType(r.resource_type).value)
+                        if r.amount is not None:
+                            r_el.set("amount", str(r.amount))
+    
+                if c.sells:
+                    sells_el = SubElement(c_el, "sells")
+                    omit_amount = (c.city_type == CityType.OURS)
+                    for r in c.sells:
+                        r_el = SubElement(sells_el, "resource")
+                        r_el.set("type", ResourceType(r.resource_type).value)
+                        if not omit_amount and r.amount is not None:
+                            r_el.set("amount", str(r.amount))
         
         # Ensure cities element is never self-closing by adding text content
         if not self.cities:
