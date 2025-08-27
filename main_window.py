@@ -1019,6 +1019,7 @@ class MainWindow(QMainWindow):
             try:
                 pil_image = Image.open(found_image_path)
                 image_width, image_height = pil_image.size
+
                 
                 # Update map_info with actual image dimensions if they differ
                 if map_info.width != image_width or map_info.height != image_height:
@@ -1028,7 +1029,6 @@ class MainWindow(QMainWindow):
                 
                 # Validate empire elements fit within image bounds
                 removed_elements = self._validate_empire_bounds(empire, image_width, image_height)
-                
                 if removed_elements:
                     QMessageBox.warning(
                         self, "Elements Outside Map Bounds",
@@ -1040,10 +1040,10 @@ class MainWindow(QMainWindow):
                 # Set the background image
                 self._current_image_path = found_image_path  # Track the loaded image path
                 self.set_background_image(pil_image)
-                
                 # Determine if this is a default map or custom map
                 self.bg_type = self._get_background_type_from_image_path(found_image_path)
                 self._update_default_cities_menu_state()
+
                 
                 return True
                 
@@ -3203,12 +3203,9 @@ class MainWindow(QMainWindow):
             self.state.selected_empire_image = pixmap
             # For PIL images, we don't have a file path unless it was loaded from _load_and_validate_empire_map
     
-        self.scene.clear()
         self.bg_item = None
-        
-        # Clear all trade route state when scene is cleared
         self._clear_scene_state()
-
+        #or self.scene.clear()
         self.no_bg_item = None
         self.bg_item = QGraphicsPixmapItem(pixmap)
         self.bg_item.setZValue(-1000)  # keep it behind markers
