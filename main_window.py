@@ -308,8 +308,8 @@ class MainWindow(QMainWindow):
 
         self.ui.mouse_position_label.setVisible(False)  # hidden until a map is set
         self.city_items = {}  # maps City -> QGraphicsPixmapItem
-        self.city_name_labels = {}  # maps City -> QGraphicsTextItem for name labels
-        self.city_trade_labels = {}
+        self.city_labels = {}  # maps City -> QGraphicsTextItem for name labels
+
         # trade-route drawing state
         self.trade_drawing_active = False
         self.trade_is_land = True
@@ -377,7 +377,8 @@ class MainWindow(QMainWindow):
         self.ui.actionViewOption1.triggered.connect(self.toggle_cities_visibility)
         self.ui.actionViewOption2.triggered.connect(self.toggle_trade_routes_visibility)
         self.ui.actionViewOption3.triggered.connect(self.toggle_border_visibility)
-        self.ui.actionViewOption4.triggered.connect(self.toggle_name_labels_visibility)
+        self.ui.actionViewOption4.toggled.connect(self.update_all_city_label_texts_from_toggles)
+        self.ui.actionViewOption5.toggled.connect(self.update_all_city_label_texts_from_toggles)
         self.ui.actionRefreshMap.triggered.connect(self.refresh_map)
         
         # Connect help menu
@@ -1742,8 +1743,8 @@ class MainWindow(QMainWindow):
         # Clear city items tracking (items will be removed from scene by scene.clear())
         try:
             self.city_items.clear()
-            self.city_name_labels.clear()
-            self.city_trade_labels.clear()
+            self.city_labels.clear()
+
         except Exception as e:
             print(f"{e}")
         # Clear drawing states
@@ -2082,11 +2083,11 @@ class MainWindow(QMainWindow):
                 
                 # Update name label position if it exists
                 key = id(city)
-                if key in self.city_name_labels:
+                if key in self.city_labels:
                     city_item = self.city_items.get(key)
                     if city_item:
-                        self._create_city_name_label(city)  # Recreate in new position
-                        self._create_city_trade_label(city)
+                        self._create_city_label(city)  # Recreate in new position
+
                 # Update trade route if city has one
                 if city.trade_route:
                     self.render_trade_route(city)
@@ -2966,9 +2967,8 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, 'actionViewOption1'):
             item.setVisible(self.ui.actionViewOption1.isChecked())
         
-        # Create and add name label if needed
-        self._create_city_name_label(city)
-        self._create_city_trade_label(city)
+        # Create and add label if needed
+        self._create_city_label(city)
 
     def _apply_item_interactivity(self, item, enable: bool):
         item.setAcceptHoverEvents(enable)
@@ -3173,13 +3173,13 @@ class MainWindow(QMainWindow):
                 
                 # Remove name label if it exists using proper key
                 city_key = id(city)
-                if city_key in self.city_name_labels:
+                if city_key in self.city_labels:
                     try:
-                        text_item = self.city_name_labels[city_key]
+                        text_item = self.city_labels[city_key]
                         if hasattr(text_item, 'bg_rect'):
                             self.scene.removeItem(text_item.bg_rect)
                         self.scene.removeItem(text_item)
-                        del self.city_name_labels[city_key]
+                        del self.city_labels[city_key]
                     except (RuntimeError, KeyError):
                         pass
             
@@ -3474,8 +3474,7 @@ class MainWindow(QMainWindow):
         self._place_city_on_scene(city)
         
         # Create name label if name labels are visible
-        self._create_city_name_label(city)
-        self._create_city_trade_label(city)
+        self._create_city_label(city)
         
         # Update default cities menu state
         self._update_default_cities_menu_state()
@@ -3529,184 +3528,116 @@ class MainWindow(QMainWindow):
     # City Name Label Management
     # -------------------------------------------------------
     
-    def _create_city_name_label(self, city):
-        """Create a name label for a city positioned above the city icon."""
-        if not hasattr(city, 'name') or not city.name:
+    def _get_city_label_mode(self) -> str:
+        n = self.ui.actionViewOption4.isChecked()
+        t = self.ui.actionViewOption5.isChecked()
+        return 'both' if n and t else ('name' if n else ('trade' if t else 'off'))
+
+
+    def _create_city_label(self, city, mode: str | None = None):
+        mode = mode or self._get_city_label_mode()
+        key = id(city)
+        if key not in self.city_items:
             return
-            
-        key = id(city)
-        
-        # Find the city item
-        if key not in self.city_items:
-            return  # No visual city item exists
-        city_item = self.city_items[key]
-        
-        # Remove existing label if it exists
-        if key in self.city_name_labels:
-            old_label = self.city_name_labels[key]
-            try:
-                self.scene.removeItem(old_label)
-            except RuntimeError:
-                pass
-            del self.city_name_labels[key]
-        
-        # Create text item with white background
-        
-        # Create text item
-        text_item = QGraphicsTextItem(city.name)
-        font = QFont("Bookman Old Style", pointSize=8)  # Small font size
-        font.setBold(True)
-        text_item.setFont(font)
-        text_item.setDefaultTextColor(Qt.GlobalColor.black)
-        
-        # Create background rectangle
-        text_rect = text_item.boundingRect()
-        padding = 0
-        bg_rect = QGraphicsRectItem(
-            text_rect.x(),
-            text_rect.y(),
-            text_rect.width() ,
-            text_rect.height(),
-        )
-        
-        # Style the background
-        bg_rect.setBrush(QBrush(Qt.GlobalColor.white))
-        bg_rect.setPen(QPen(Qt.GlobalColor.black, 1))
-        bg_rect.setZValue(100)  # Above city icons but below selection
-        
-        # Position above the city icon
-        city_pos = city_item.pos()
-        city_rect = city_item.boundingRect()
-        
-        # Center the label above the city icon
-        label_x = city_pos.x() + city_rect.width() / 2 - text_rect.width() / 2
-        label_y = city_pos.y() - text_rect.height() - padding + 6  # 6px down from top of the icon
-        
-        bg_rect.setPos(label_x - padding, label_y - padding)
-        text_item.setPos(label_x, label_y)
-        text_item.setZValue(101)  # Above background
-        
-        # Add to scene
-        self.scene.addItem(bg_rect)
-        self.scene.addItem(text_item)
-        
-        # Store both items as a group (we'll store the text item and link to bg)
-        text_item.bg_rect = bg_rect
-        self.city_name_labels[key] = text_item
-        
-        # Apply current visibility state
-        visible = hasattr(self.ui, 'actionViewOption4') and self.ui.actionViewOption4.isChecked()
-        text_item.setVisible(visible)
-        bg_rect.setVisible(visible)
-        
-    def _create_city_trade_label(self, city):
-        """Create a trade label (buys/sells info) positioned below the city icon."""
-        sells = [str(x) for x in city.sells if x]
-        buys= [str(x) for x in city.buys if x]
-        parts = []
-        if sells: parts.append("S: " + ", ".join(sells))
-        if buys:  parts.append("B: " + ", ".join(buys))
-        text = " | ".join(parts)
-            
-        key = id(city)
+        # if key in self.city_labels:
+        #     self._remove_city_label(city)
+        # remove any old per-type/unified labels
+        # for dname in ("city_name_labels", "city_trade_labels", "city_labels"): #labels are created from xml so checking all types shouldnt be necessary
+        #     d = getattr(self, dname, None)
+        #     if d and key in d:
+        #         it = d.pop(key)
+        #         try:
+        #             self.scene.removeItem(it)
+        #             if hasattr(it, "bg_rect"):
+        #                 self.scene.removeItem(it.bg_rect)
+        #         except RuntimeError:
+        #             pass
     
-        # Find the city item
-        if key not in self.city_items:
-            return  # No visual city item exists
-        city_item = self.city_items[key]
+        # build both text variants up-front
+        name_text = city.name or ""
+        def _fmt_res(r, omit_amount=False):
+            nm = getattr(r.resource_type, "value", r.resource_type)
+            nm = str(nm).replace("_", " ").title()
+            return f"{nm}×{r.amount}" if (not omit_amount and r.amount not in (None, 1)) else nm
+        sells = ", ".join(_fmt_res(r, omit_amount=(city.city_type == ed.CityType.OURS)) for r in (city.sells or []))
+        buys  = ", ".join(_fmt_res(r) for r in (city.buys or []))
+        trade = ("S: " + sells if sells else "") + (" | " if sells and buys else "") + ("B: " + buys if buys else "")
     
-        # Remove existing label if it exists
-        if key in self.city_trade_labels:
-            old_label = self.city_trade_labels[key]
-            try:
-                self.scene.removeItem(old_label)
-                self.scene.removeItem(old_label.bg_rect)
-            except RuntimeError:
-                pass
-            del self.city_trade_labels[key]
+        # create items
+        text_item = QGraphicsTextItem()
+        font = QFont("Bookman Old Style", pointSize=8); font.setBold(True)
+        text_item.setFont(font); text_item.setDefaultTextColor(Qt.GlobalColor.black)
     
-        # Create text item
-        text_item = QGraphicsTextItem(text)
-        font = QFont("Bookman Old Style", pointSize=7)  # slightly smaller font
-        font.setItalic(True)
-        text_item.setFont(font)
-        text_item.setDefaultTextColor(Qt.GlobalColor.darkBlue)
-    
-        # Create background rectangle
-        text_rect = text_item.boundingRect()
-        padding = 1
-        bg_rect = QGraphicsRectItem(
-            text_rect.x(),
-            text_rect.y(),
-            text_rect.width(),
-            text_rect.height(),
-        )
-    
-        # Style the background
+        bg_rect = QGraphicsRectItem()
         bg_rect.setBrush(QBrush(Qt.GlobalColor.white))
         bg_rect.setPen(QPen(Qt.GlobalColor.black, 1))
         bg_rect.setZValue(100)
     
-        # Position below the city icon
-        city_pos = city_item.pos()
-        city_rect = city_item.boundingRect()
+        # store and compose once
+        if not hasattr(self, "city_labels"):
+            self.city_labels = {}
+        self.city_labels[key] = text_item
+        text_item.bg_rect = bg_rect
+        text_item._name_text = name_text
+        text_item._trade_text = trade
     
-        label_x = city_pos.x() + city_rect.width() / 2 - text_rect.width() / 2
-        label_y = city_pos.y() + city_rect.height() + padding  # just under the icon
-    
-        bg_rect.setPos(label_x - padding, label_y - padding)
-        text_item.setPos(label_x, label_y)
-        text_item.setZValue(101)
-    
-        # Add to scene
         self.scene.addItem(bg_rect)
         self.scene.addItem(text_item)
     
-        # Store both items
-        text_item.bg_rect = bg_rect
-        if not hasattr(self, "city_trade_labels"):
-            self.city_trade_labels = {}
-        self.city_trade_labels[key] = text_item
+        # initial text/layout
+        self._apply_city_label_mode(city, mode)
     
-        # Apply visibility state (hooked to a separate menu action)
-        visible = hasattr(self.ui, 'actionViewOption5') and self.ui.actionViewOption5.isChecked()
-        text_item.setVisible(visible)
-        bg_rect.setVisible(visible)
+    
+    def _apply_city_label_mode(self, city, mode: str | None = None):
+        mode = mode or self._get_city_label_mode()
+        key = id(city)
+        item = getattr(self, "city_labels", {}).get(key)
+        if not item:
+            return
+    
+        # choose text
+        name_text, trade_text = item._name_text, item._trade_text
+        text = (
+            name_text if mode == 'name' else
+            trade_text if mode == 'trade' else
+            (f"{name_text}\n{trade_text}" if name_text and trade_text else (name_text or trade_text))
+        )
+        show = (mode != 'off') and bool(text)
+        item.setVisible(show); item.bg_rect.setVisible(show)
+        if not show:
+            return
+    
+        # set text & layout above city
+        item.setPlainText(text)
+        r = item.boundingRect()
+        item.bg_rect.setRect(r.x(), r.y(), r.width(), r.height())
+    
+        city_item = self.city_items[key]
+        city_pos, city_rect = city_item.pos(), city_item.boundingRect()
+        x = city_pos.x() + city_rect.width()/2 - r.width()/2
+        y = city_pos.y() - r.height() + 6
+        item.setPos(x, y); item.setZValue(101)
+        item.bg_rect.setPos(x, y)
 
-    def _remove_city_name_label(self, city):
+    def _remove_city_label(self, city):
         """Remove the name label for a city."""
         key = id(city)
-        if key in self.city_name_labels:
-            text_item = self.city_name_labels[key]
+        if key in self.city_labels:
+            text_item = self.city_labels[key]
             try:
                 # Remove background rectangle
-                if hasattr(text_item, 'bg_rect'):
-                    self.scene.removeItem(text_item.bg_rect)
-                # Remove text item
+                self.scene.removeItem(text_item.bg_rect)
                 self.scene.removeItem(text_item)
             except RuntimeError:
                 pass
-            del self.city_name_labels[key]
-    def remove_city_trade_label(self, city):
-        """Remove the trade label (if any) for a specific city."""
-        if not hasattr(self, "city_trade_labels"):
-            return
-    
-        key = id(city)
-        if key in self.city_trade_labels:
-            label_item = self.city_trade_labels[key]
-            try:
-                # Remove from scene
-                self.scene.removeItem(label_item)
-                if hasattr(label_item, "bg_rect"):
-                    self.scene.removeItem(label_item.bg_rect)
-            except RuntimeError:
-                # Item might already be deleted
-                pass
-    
-            # Drop Python references
-            del self.city_trade_labels[key]
-
+            del self.city_labels[key]
+    def _remove_all_city_labels(self):
+        for key in self.city_labels:
+            text_item = self.city_labels[key]
+            self.scene.removeItem(text_item.bg_rect)
+            self.scene.removeItem(text_item)
+            del self.city_labels[key]
+        
     # -------------------------------------------------------
     # View Options Toggle Methods
     # -------------------------------------------------------
@@ -3793,35 +3724,12 @@ class MainWindow(QMainWindow):
         
         print(f"Empire border visibility: {'ON' if visible else 'OFF'}")
     
-    def toggle_name_labels_visibility(self):
-        """Toggle visibility of city name labels."""
-        visible = self.ui.actionViewOption4.isChecked()
-        
-        for text_item in self.city_name_labels.values():
-            try:
-                text_item.setVisible(visible)
-                # Also toggle background rectangle
-                if hasattr(text_item, 'bg_rect'):
-                    text_item.bg_rect.setVisible(visible)
-            except RuntimeError:
-                # Item was deleted, skip
-                pass
-        
-        print(f"City name labels visibility: {'ON' if visible else 'OFF'}")
-        
-    def toggle_trade_labels_visibility(self):
-        """Toggle visibility of city name labels."""
-        visible = self.ui.actionViewOption5.isChecked()
-        
-        for text_item in self.city_trade_labels.values():
-            try:
-                text_item.setVisible(visible)
-                # Also toggle background rectangle
-                if hasattr(text_item, 'bg_rect'):
-                    text_item.bg_rect.setVisible(visible)
-            except RuntimeError:
-                # Item was deleted, skip
-                pass
+
+    def update_all_city_label_texts_from_toggles(self):
+        mode = self._get_city_label_mode()
+        for city in self.state.current_empire_object.cities:
+            self._apply_city_label_mode(city, mode)
+            
     def align_trade_points(self, alignment_radius: int) -> int:
         """
         Snap nearby trade points (pixel units) to a shared integer coordinate.
@@ -3901,7 +3809,7 @@ class MainWindow(QMainWindow):
 
         # Clear internal state
         self.city_items.clear()
-        self.city_name_labels.clear()
+        self.city_labels.clear()
         self._clear_scene_state()
         
         # Re-render all empire elements
@@ -3910,10 +3818,9 @@ class MainWindow(QMainWindow):
 
         for city in empire.cities:
             self._place_city_on_scene(city)
-            
             # Always create name labels (visibility will be controlled by toggle)
-            self._create_city_name_label(city)
-            self._create_city_trade_label(city)
+            self._create_city_label(city)
+
             # Re-render trade routes
             if city.trade_route is not None:
                 self.render_trade_route(city)
@@ -3924,11 +3831,10 @@ class MainWindow(QMainWindow):
             self.render_empire_border()
         
         # 3. Update visibility states based on current toggle settings
+        self.update_all_city_label_texts_from_toggles()
         self.toggle_cities_visibility()
         self.toggle_trade_routes_visibility()
         self.toggle_border_visibility()
-        self.toggle_name_labels_visibility()
-        self.toggle_trade_labels_visibility()
         
         # 4. Repopulate Default Cities menu
         self.populate_default_cities_menu()
@@ -3939,6 +3845,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Ok
             )
         print("Map refresh completed")
+
     def populate_default_cities_menu(self):
         """Populate the Default Cities menu with hierarchical regions and cities from JSON."""
         try:
