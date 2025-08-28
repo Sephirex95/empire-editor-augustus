@@ -1,4 +1,4 @@
-# Empire Editor for Augustus by Sephirex95
+# Empire Editor for Augustus by Sephirex
 
 A visual tool for creating and editing *Empire* maps and trade data for the [Augustus](https://github.com/Keriew/augustus/tree/master) project.
 
@@ -12,7 +12,8 @@ A visual tool for creating and editing *Empire* maps and trade data for the [Aug
 - Requires valid Caesar III installation to run
 - Extracts **vanilla Caesar III** assets **at runtime** from your local installation (not redistributed).
 - A long list of default cities to auto-place on the maps (with recalculated coordinates for all 3 Areldir's maps)
-- Currently **DOES NOT** support invasions or future trade. TBA soon.
+- Currently **DOES NOT** support invasion or distant battle paths.
+- Support for visuals for ornaments and 'show_ireland' for legacy background is currently NOT PLANNED. The functionality is supported but not displayed.
 - main_window.py is in dire need of a refactor, the code is massive (4k+ lines). There's a lot of duplicated methods and unnecessary checks, which I'll try to remove to be easier to maintain.
 
 ---
@@ -22,7 +23,7 @@ A visual tool for creating and editing *Empire* maps and trade data for the [Aug
 
 ## Releases
 
-Download the full program from Releases. Currently no Github build (TBA)
+Download the full program from Releases. Continous Build and manual releases provided by Github Workflows. 
 
 - Built with **PyInstaller** (onedir). Includes all necessary libraries, including packaged Python 3.13.
 - Dependencies and runtime files are placed under `./_internal/`.
