@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import (QIcon,QFont, QPixmap, QImage, QCursor, QPainter,
     QPen, QBrush, QPainterPath, QAction, QColor, QDesktopServices)
-from PySide6.QtCore import QSize, QSettings, Qt, QEvent, QObject, QRectF, QSizeF, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QEvent, QObject, QRectF, QSizeF, QTimer, QUrl
 from ui_empire_editor import Ui_MainWindow, ImageSelectionDialog, EmpirePropertiesDialog, show_about_dialog, SettingsDialog
 from PIL import Image
 import empire_data as ed
