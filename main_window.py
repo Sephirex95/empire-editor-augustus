@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
         self.ui.graphicsView.setScene(self.scene)
 
         self.ui.graphicsView.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.ui.graphicsView.setViewportMargins(10, 10, 10, 10)
+        self.ui.graphicsView.setViewportMargins(10,10,10,10)
 
         self.ui.graphicsView.viewport().setMouseTracking(True)
         
@@ -1139,7 +1139,7 @@ class MainWindow(QMainWindow):
                 # Center the cursor on the pixmap (hotspot at center)
                 hotspot_x = pixmap.width() // 2
                 hotspot_y = pixmap.height() // 2
-                cursor = QCursor(pixmap, hotspot_x, hotspot_y)
+                cursor = QCursor(pixmap,hotspot_x, hotspot_y )
                 for w in widgets: w.setCursor(cursor)
             except:
                 for w in widgets: 
@@ -1220,6 +1220,7 @@ class MainWindow(QMainWindow):
         view = self.ui.graphicsView
         vp = view.viewport()
         vp_pos = vp.mapFromGlobal(gp)
+
     
         # Update position label
         if vp.rect().contains(vp_pos):
@@ -1255,6 +1256,7 @@ class MainWindow(QMainWindow):
             elif btn == Qt.MouseButton.LeftButton:
                 # Left-click finishes vertex editing
                 scene_pos = view.mapToScene(vp.mapFromGlobal(gp))
+
                 self.finish_vertex_editing(scene_pos)
                 return True  # Consume the event
     
@@ -1297,14 +1299,15 @@ class MainWindow(QMainWindow):
             if event.button() == Qt.MouseButton.LeftButton:
                 self.deselect_item()
                 if inside_view:
-                    view_pos = self.ui.graphicsView.mapFromGlobal(gp)
-                    scene_pos = self.ui.graphicsView.mapToScene(view_pos)
+                    view = self.ui.graphicsView
+                    vp   = view.viewport()
+                    vp_pos   = vp.mapFromGlobal(gp)         # viewport coords
+                    scene_pos = view.mapToScene(vp_pos)     
                     self.handle_icon_drop(scene_pos)
                 return True
     
         return False
 
-    
     def _handle_edge_click(self, event, gp, inside_view):
         if event.button() == Qt.MouseButton.RightButton or not inside_view:
             self._edge_prompt_incomplete()
@@ -3340,11 +3343,6 @@ class MainWindow(QMainWindow):
 
         kind = self.selected_kind
         ctype = ed.CityType(kind)
-        pixmap = self._pixmap_for_city(ctype)
-        pix_w = pixmap.width()
-        pix_h = pixmap.height() 
-        top_left_x = x - pix_w  // 2
-        top_left_y = y - pix_h  // 2
 
         # OUR city: single instance with move-confirmation
         if kind == ed.CityType.OURS:
