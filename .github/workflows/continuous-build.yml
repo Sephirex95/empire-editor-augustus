@@ -43,12 +43,14 @@ jobs:
       - name: Install Qt runtime deps (Linux)
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             libxcb-cursor0 libxcb-xtest0 libxkbcommon-x11-0
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip wheel
           pip install -r requirements.txt
           pip install pyinstaller
@@ -63,6 +65,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
+          set -euo pipefail
           if [ -f EmpireEditor.spec ]; then
             pyinstaller --noconfirm --clean EmpireEditor.spec
           else
@@ -73,41 +76,66 @@ jobs:
               main_window.py
           fi
 
+      # ---------- Package only the runnable artifact (no _include, no folders) ----------
+
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
         run: |
-          set -e
+          set -euo pipefail
           APP_NAME="EmpireEditor"
+          OUT="dist"
           echo "==== dist tree ===="
-          ls -la dist || true
-          if [ -f "dist/${APP_NAME}.exe" ]; then
-            7z a "${APP_NAME}-Windows.zip" "dist/${APP_NAME}.exe"
-          elif [ -d "dist/${APP_NAME}" ]; then
-            7z a "${APP_NAME}-Windows.zip" "dist/${APP_NAME}"
+          ls -la "${OUT}" || true
+          if [ -f "${OUT}/${APP_NAME}.exe" ]; then
+            # one-file exe -> zip with exe at root
+            7z a "${APP_NAME}-Windows.zip" "${OUT}/${APP_NAME}.exe"
+          elif [ -f "${OUT}/${APP_NAME}/${APP_NAME}.exe" ]; then
+            # one-folder build -> zip ONLY the exe (exclude _include and others)
+            (cd "${OUT}/${APP_NAME}" && 7z a "../../${APP_NAME}-Windows.zip" "${APP_NAME}.exe")
           else
-            echo "ERROR: ${APP_NAME} output not found in dist/"
-            ls -R dist || true
+            echo "ERROR: ${APP_NAME}.exe not found"
+            ls -R "${OUT}" || true
             exit 1
           fi
 
       - name: Package artifact (macOS)
         if: runner.os == 'macOS'
         run: |
+          set -euo pipefail
           APP_NAME="EmpireEditor"
           OUT="dist"
           if [ -d "${OUT}/${APP_NAME}.app" ]; then
-            ditto -c -k --sequesterRsrc --keepParent "${OUT}/${APP_NAME}.app" "${APP_NAME}-macOS.zip"
+            # keep the .app bundle intact at archive root
+            (cd "${OUT}" && ditto -c -k --sequesterRsrc --keepParent "${APP_NAME}.app" "../${APP_NAME}-macOS.zip")
+          elif [ -f "${OUT}/${APP_NAME}" ]; then
+            # one-file binary -> zip with binary at root
+            (cd "${OUT}" && zip -r "../${APP_NAME}-macOS.zip" "${APP_NAME}")
+          elif [ -f "${OUT}/${APP_NAME}/${APP_NAME}" ]; then
+            # one-folder build -> zip ONLY the binary
+            (cd "${OUT}/${APP_NAME}" && zip -r "../../${APP_NAME}-macOS.zip" "${APP_NAME}")
           else
-            cd "${OUT}"
-            zip -r "../${APP_NAME}-macOS.zip" "${APP_NAME}"
-            cd -
+            echo "ERROR: macOS artifact not found"
+            ls -R "${OUT}" || true
+            exit 1
           fi
 
       - name: Package artifact (Linux)
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
           APP_NAME="EmpireEditor"
-          tar -czf "${APP_NAME}-Linux.tar.gz" -C dist "${APP_NAME}"
+          OUT="dist"
+          if [ -f "${OUT}/${APP_NAME}" ]; then
+            # one-file binary -> tar with binary at root
+            tar -czf "${APP_NAME}-Linux.tar.gz" -C "${OUT}" "${APP_NAME}"
+          elif [ -f "${OUT}/${APP_NAME}/${APP_NAME}" ]; then
+            # one-folder build -> tar ONLY the binary
+            (cd "${OUT}/${APP_NAME}" && tar -czf "../../${APP_NAME}-Linux.tar.gz" "${APP_NAME}")
+          else
+            echo "ERROR: Linux artifact not found"
+            ls -R "${OUT}" || true
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
