@@ -162,8 +162,8 @@ jobs:
         with:
           tag: continuous                      # fixed rolling tag
           commit: ${{ github.sha }}            # move tag to this commit
-          name: "Continuous build"
-          body: "Automated build from ${{ github.ref }} @ ${{ github.sha }}"
+          name: "Unstable Build"
+          body: "!NO LIBRARIES OR ASSETS INCLUDED! Requires the '_includes' folder from full release. Auto-build from ${{ github.ref }} @ ${{ github.sha }}"
           artifacts: "artifacts/*"
           allowUpdates: true                   # update existing release
           replacesArtifacts: true              # delete & re-upload assets
