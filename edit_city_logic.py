@@ -419,7 +419,7 @@ class CityPropertiesDialog(QDialog):
         # Rule summary:
         # - OURS, ROMAN, DISTANT, VULNERABLE -> hide trade route box & layout (and children)
         # - TRADE -> show them
-        show_trade_route = (ctype == CityType.TRADE)
+        show_trade_route = (ctype in [CityType.TRADE, CityType.FUTURE_TRADE])
         show_trade_lists = (ctype in [CityType.TRADE,CityType.OURS, CityType.FUTURE_TRADE])
         # Group box: one call hides/shows all its children
         if self._trade_group is not None:
