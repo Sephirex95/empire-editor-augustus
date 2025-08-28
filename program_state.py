@@ -7,8 +7,8 @@ Created on Wed Aug 27 22:26:08 2025
 """
 import os
 import sys
-from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QMessageBox, QFileDialog
+from PySide.QtCore import QSettings
+from PySide.QtWidgets import QMessageBox, QFileDialog
 import empire_data as ed
 from sg_reader_light import SgFileReader
 from enum import Enum, auto
