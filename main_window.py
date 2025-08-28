@@ -2346,8 +2346,10 @@ class MainWindow(QMainWindow):
         # Remove the group and all its items
         if city_index in self._trade_route_groups:
             group = self._trade_route_groups[city_index]
-            if group.scene() is not None:  # Defensive check
+            try:
                 self.scene.removeItem(group)
+            except:
+                pass
             del self._trade_route_groups[city_index]
             
         # Remove hit items for this city's trade route - more robust cleanup
@@ -2754,7 +2756,6 @@ class MainWindow(QMainWindow):
 # %% Everything else
    
     # ---------- ROUTER ----------
-    
 
     def add_city_icons_to_list(self):
         self.ui.listWidget.clear()
