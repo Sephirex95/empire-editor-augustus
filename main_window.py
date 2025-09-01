@@ -2033,8 +2033,9 @@ class MainWindow(QMainWindow):
                 pass
         if isinstance(kind, ed.CityType):
             self.handle_city_drop(scene_pos)
-        elif kind == EmpObjTypes.EMPIRE_EDGE:
-            self.handle_drop_empire_edge(scene_pos)
+
+        elif kind.value == EmpObjTypes.EMPIRE_EDGE.value:
+            self.handle_drop_empire_edge(scene_pos) 
         else:
             print(f"Unknown kind: {kind}")
 
