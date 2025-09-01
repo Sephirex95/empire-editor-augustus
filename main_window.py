@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import shutil
+from typing import List, Optional, Dict, Tuple, Any
 from PySide6.QtWidgets import (
     QMainWindow,
     QFileDialog,
@@ -56,25 +57,15 @@ import edit_city_logic as emp_dlg
 from enum import Enum, auto
 import copy
 from html import escape as esc
-from program_state import ProgramState
+from program_state import ProgramState, EmpObjTypes
+from graphics_objects import (
+    GraphicsObjectManager, CityGraphicsObject, BorderGraphicsObject, 
+    TradeRouteGraphicsObject, SelectableElement, GraphicsObjectType
+)
 
 
 # ---------------------------------------------
-# separated enums
-# ---------------------------------------------
-class EmpObjTypes(Enum):
-    EMPIRE_EDGE = auto()
-    LAND_DOT = auto()
-    SEA_DOT = auto()
-    TRADE_FLAG = auto()
-    ROMAN_FLAG = auto()
-    DISTANT_FLAG = auto()
-    OUR_FLAG = auto()
-    OUR_LEGION = auto()
-    NATIVES = auto()
-    DISTANT_BATTLE = auto()
-
-
+# MainWindow class
 # ---------------------------------------------
 
 
@@ -119,6 +110,14 @@ class MainWindow(QMainWindow):
         self.bg_type = ed.EmpBackgroundTypes.NONE  # type of background currently set
         self.cities_data = {}  # Store loaded cities data from JSON
         self._current_image_path = None  # Track current background image file path
+        
+        # Graphics object management - NEW SYSTEM
+        self.graphics_manager = GraphicsObjectManager()
+        self.selectable_elements: List[SelectableElement] = []  # Available elements for selection
+        self.selected_data_object = None  # Currently selected data object
+        self.selected_graphics_object = None  # Currently selected graphics object ON THE SCENE
+        self.selected_list_element = None  # Currently selected element from the list widget
+        
         # Edge drawing state
         self.edge_drawing_active = False  # are we in the border drawing mode?
         self.edge_points_img = []  # [(x_img, y_img), ...]
@@ -1223,6 +1222,7 @@ class MainWindow(QMainWindow):
                 try:
                     w.unsetCursor()
                 except:
+                    print("Failed to unset cursor")
                     pass
             return
 
@@ -1246,6 +1246,7 @@ class MainWindow(QMainWindow):
                     try:
                         w.unsetCursor()
                     except:
+                        print("Failed to unset cursor")
                         pass
 
     def update_window_title(self):
@@ -1401,13 +1402,14 @@ class MainWindow(QMainWindow):
 
         elif event.type() == QEvent.Type.MouseButtonRelease:
             if event.button() == Qt.MouseButton.LeftButton:
-                self.deselect_item()
                 if inside_view:
                     view = self.ui.graphicsView
                     vp = view.viewport()
                     vp_pos = vp.mapFromGlobal(gp)  # viewport coords
                     scene_pos = view.mapToScene(vp_pos)
                     self.handle_icon_drop(scene_pos)
+                # Deselect AFTER handling the drop, so selection info is still available
+                self.deselect_item()
                 return True
 
         return False
@@ -1468,60 +1470,93 @@ class MainWindow(QMainWindow):
     # %%% Selection handling:
     def _select_scene_item(self, item):
         """
-        Handle selecting any selectable object on the scene.
+        Handle selecting any selectable object on the scene using the new graphics system.
         Only one selection can be active at a time.
         """
-        # Clear ALL previous selection states
-        self.clear_border_selection_overlay()
-        self.clear_trade_route_selection_overlay()
-        self.deselect_city_marker()
-        self.border_selected = False
-        self.selected_item = None
+        # Try to find a graphics object for this scene item, including nested objects
+        graphics_obj = self.graphics_manager.get_graphics_object_for_scene_item_including_nested(item)
+        
+        if graphics_obj:
+            # Use graphics manager to select
+            self.graphics_manager.select_object(graphics_obj)
+            self.selected_data_object = graphics_obj.data_object
+            self.selected_graphics_object = graphics_obj
+            self.selected_item = item
+            
+            # Handle specific object types
+            if isinstance(graphics_obj, CityGraphicsObject):
+                # Legacy compatibility
+                self.select_city_marker(item, graphics_obj.data_object)
+                return
+            elif isinstance(graphics_obj, TradeRouteGraphicsObject):
+                # Handle trade route selection
+                city = graphics_obj.data_object
+                self.select_trade_route_overlay(city)
+                if city.trade_route and city.trade_route.trade_points:
+                    pts = [(p.x, p.y) for p in city.trade_route.trade_points]
+                    self.create_vertex_handles("TRADE_ROUTE", pts, city)
+                return
+            elif isinstance(graphics_obj, BorderGraphicsObject):
+                # Handle border selection
+                self.select_empire_border_overlay()
+                empire = self.state.current_empire_object
+                if empire and empire.border and empire.border.edges:
+                    pts = [(edge.x, edge.y) for edge in empire.border.edges]
+                    self.create_vertex_handles("EMPIRE_BORDER", pts)
+                return
+        else:
+            # Legacy handling for items not yet converted to new system
+            # Clear ALL previous selection states
+            self.clear_border_selection_overlay()
+            self.clear_trade_route_selection_overlay()
+            self.deselect_city_marker()
+            self.border_selected = False
+            self.selected_item = None
 
-        # Trade route segment hit
-        if hasattr(item, "data") and callable(item.data):
-            route_type = item.data(Qt.ItemDataRole.UserRole)
-            if route_type == "TRADE_ROUTE":
-                city_index = item.data(Qt.ItemDataRole.UserRole + 1)
-                city = self._get_city_by_index(city_index)
-                if city:
-                    self.select_trade_route_overlay(city)
-                    self.selected_item = item
-                    # Create vertex handles for editing
-                    if city.trade_route and city.trade_route.trade_points:
-                        pts = [(p.x, p.y) for p in city.trade_route.trade_points]
-                        self.create_vertex_handles("TRADE_ROUTE", pts, city)
+            # Trade route segment hit
+            if hasattr(item, "data") and callable(item.data):
+                route_type = item.data(Qt.ItemDataRole.UserRole)
+                if route_type == "TRADE_ROUTE":
+                    city_index = item.data(Qt.ItemDataRole.UserRole + 1)
+                    city = self._get_city_by_index(city_index)
+                    if city:
+                        self.select_trade_route_overlay(city)
+                        self.selected_item = item
+                        # Create vertex handles for editing
+                        if city.trade_route and city.trade_route.trade_points:
+                            pts = [(p.x, p.y) for p in city.trade_route.trade_points]
+                            self.create_vertex_handles("TRADE_ROUTE", pts, city)
+                        return
+
+                # Vertex handle selection
+                if route_type == "VERTEX_HANDLE":
+                    self.start_vertex_editing(item)
                     return
 
-            # Vertex handle selection
-            if route_type == "VERTEX_HANDLE":
-                self.start_vertex_editing(item)
+            # Edge segment (hit proxy)
+            if item in self.border_edge_hit_items:
+                self.selected_edge_index = item.data(Qt.ItemDataRole.UserRole + 1)
+                self.select_empire_border_overlay()
+                self.selected_item = item
+                # Create vertex handles for border editing
+                empire = self.state.current_empire_object
+                if empire and empire.border and empire.border.edges:
+                    pts = [(edge.x, edge.y) for edge in empire.border.edges]
+                    self.create_vertex_handles("EMPIRE_BORDER", pts)
                 return
 
-        # Edge segment (hit proxy)
-        if item in self.border_edge_hit_items:
-            self.selected_edge_index = item.data(Qt.ItemDataRole.UserRole + 1)
-            self.select_empire_border_overlay()
-            self.selected_item = item
-            # Create vertex handles for border editing
-            empire = self.state.current_empire_object
-            if empire and empire.border and empire.border.edges:
-                pts = [(edge.x, edge.y) for edge in empire.border.edges]
-                self.create_vertex_handles("EMPIRE_BORDER", pts)
-            return
-
-        # (optional: keep vertex/icon handling if you still want it)
-        if item in self.border_icon_items:
-            self.select_empire_border_overlay()
-            self.selected_item = item
-            return
-
-        # City markers
-        if hasattr(item, "data") and callable(item.data):
-            city_obj = item.data(1)
-            if city_obj and city_obj.__class__.__name__ == "City":
-                self.select_city_marker(item, city_obj)
+            # (optional: keep vertex/icon handling if you still want it)
+            if item in self.border_icon_items:
+                self.select_empire_border_overlay()
+                self.selected_item = item
                 return
+
+            # City markers (legacy)
+            if hasattr(item, "data") and callable(item.data):
+                city_obj = item.data(1)
+                if city_obj and city_obj.__class__.__name__ == "City":
+                    self.select_city_marker(item, city_obj)
+                    return
 
         # If nothing matched, ensure nothing is selected
         self.deselect_all()
@@ -1563,10 +1598,25 @@ class MainWindow(QMainWindow):
             self.ui.listWidget.setCurrentItem(item)
 
     def select_item(self, item):
+        """Select an item from the list widget using the new graphics system."""
         self.deselect_all()  # clear current selections first
+        
+        # Get the selectable element
+        element_index = item.data(Qt.ItemDataRole.UserRole)
+        if element_index is None or element_index >= len(self.selectable_elements):
+            return
+            
+        selectable_element = self.selectable_elements[element_index]
+        
+        # Store references to both the list item and the selectable element
         self.selected_item = item
-        self.selected_kind = item.data(Qt.ItemDataRole.UserRole)  # EmpCityTypes or EmpObjTypes
-        pixmap = item.icon().pixmap(self.ui.listWidget.iconSize())
+        self.selected_data_object = selectable_element.data_type  # The data type (ed.CityType, etc.)
+        self.selected_list_element = selectable_element  # The selectable element from list
+        
+        # Legacy compatibility for existing code
+        self.selected_kind = selectable_element.data_type
+        
+        pixmap = selectable_element.pixmap
         self.ui.graphicsView.setInteractive(False)
 
         # cache the exact pixmap used for drag
@@ -1581,6 +1631,10 @@ class MainWindow(QMainWindow):
 
     def deselect_item(self):
         self.selected_item = None
+        self.selected_data_object = None
+        self.selected_graphics_object = None
+        self.selected_list_element = None
+        self.selected_kind = None  # Legacy compatibility
         self.is_dragging = False
         self.set_drawing_cursor(False)
         self.ui.graphicsView.setInteractive(True)
@@ -1596,13 +1650,21 @@ class MainWindow(QMainWindow):
     # ===================================================================
 
     def deselect_all(self):
-        """Clear all selection states."""
+        """Clear all selection states using the new graphics system."""
+        # Use graphics manager to deselect
+        self.graphics_manager.deselect_all()
+        
+        # Clear other selection states
         self.clear_border_selection_overlay()
         self.clear_trade_route_selection_overlay()
         self.clear_vertex_handles()
         self.deselect_city_marker()
         self.border_selected = False
         self.selected_item = None
+        self.selected_data_object = None
+        self.selected_graphics_object = None
+        self.selected_list_element = None
+        self.selected_kind = None  # Legacy compatibility
         self.selected_edge_index = None
 
     def _clear_selection_overlay(self, overlay_type):
@@ -1692,10 +1754,15 @@ class MainWindow(QMainWindow):
         )
 
     def _clear_scene_state(self):
-        """Clear all scene-related state when scene is cleared or reset."""
+        """Clear all scene-related state when scene is cleared or reset using the new graphics system."""
+        # Clear graphics manager
+        self.graphics_manager.clear_all()
+        
         # Clear selection state
         self.selected_item = None
-        self.selected_kind = None
+        self.selected_data_object = None
+        self.selected_graphics_object = None
+        self.selected_kind = None  # Legacy compatibility
         self._trade_dot_reps = []
         self.selected_edge_index = None
         self.selected_trade_route_city = None
@@ -1983,22 +2050,37 @@ class MainWindow(QMainWindow):
 
     # %%% other input-adjacent
     def _show_context_menu_for_item(self, item, global_pos):
-        """Show context menu based on enum stored in item."""
-        if not (hasattr(item, "data") and callable(item.data)):
-            return
+        """Show context menu using the new graphics system."""
+        # Try to get graphics object first, including nested objects
+        graphics_obj = self.graphics_manager.get_graphics_object_for_scene_item_including_nested(item)
+        
+        if graphics_obj:
+            # Use new graphics system
+            menu_actions = graphics_obj.get_context_menu_actions()
+            if menu_actions:
+                menu = QMenu(self)
+                for label, callback in menu_actions:
+                    act = QAction(label, self)
+                    act.triggered.connect(lambda checked=False, cb=callback: cb())
+                    menu.addAction(act)
+                menu.exec(global_pos)
+        else:
+            # Fall back to legacy system
+            if not (hasattr(item, "data") and callable(item.data)):
+                return
 
-        obj_type = item.data(Qt.ItemDataRole.UserRole)
-        if obj_type not in self.context_menu_options:
-            return
+            obj_type = item.data(Qt.ItemDataRole.UserRole)
+            if obj_type not in self.context_menu_options:
+                return
 
-        menu = QMenu(self)
-        for label, callback in self.context_menu_options[obj_type]:
-            act = QAction(label, self)
-            # Fix lambda capture issue by using default parameter
-            act.triggered.connect(lambda checked=False, cb=callback, it=item: cb(it))
-            menu.addAction(act)
+            menu = QMenu(self)
+            for label, callback in self.context_menu_options[obj_type]:
+                act = QAction(label, self)
+                # Fix lambda capture issue by using default parameter
+                act.triggered.connect(lambda checked=False, cb=callback, it=item: cb(it))
+                menu.addAction(act)
 
-        menu.exec(global_pos)
+            menu.exec(global_pos)
 
     # ===================================================================
     # COORDINATE & GEOMETRY HELPERS
@@ -2024,20 +2106,35 @@ class MainWindow(QMainWindow):
         return abs(x1 - x2) <= epsilon and abs(y1 - y2) <= epsilon
 
     def drop_object(self, scene_pos):
-        kind = self.selected_kind
-        for enum in (ed.CityType, EmpObjTypes):
-            try:
-                kind = enum(kind)
-                break
-            except (ValueError, TypeError):
-                pass
-        if isinstance(kind, ed.CityType):
-            self.handle_city_drop(scene_pos)
-
-        elif kind.value == EmpObjTypes.EMPIRE_EDGE.value:
-            self.handle_drop_empire_edge(scene_pos) 
+        """Handle dropping objects using the new graphics system."""
+        # Check if we have a selected element from the list widget
+        if self.selected_list_element and isinstance(self.selected_list_element, SelectableElement):
+            selectable_element = self.selected_list_element
+            if selectable_element.graphics_type == GraphicsObjectType.CITY:
+                self.handle_city_drop(scene_pos)
+            elif selectable_element.graphics_type == GraphicsObjectType.BORDER_EDGE:
+                self.handle_drop_empire_edge(scene_pos)
+            else:
+                print(f"Unknown graphics type: {selectable_element.graphics_type}")
         else:
-            print(f"Unknown kind: {kind}")
+            # Legacy handling
+            kind = self.selected_kind
+            if kind is None:
+                print("No object selected for drop")
+                return
+                
+            for enum in (ed.CityType, EmpObjTypes):
+                try:
+                    kind = enum(kind)
+                    break
+                except (ValueError, TypeError):
+                    pass
+            if isinstance(kind, ed.CityType):
+                self.handle_city_drop(scene_pos)
+            elif hasattr(kind, 'value') and kind.value == EmpObjTypes.EMPIRE_EDGE.value:
+                self.handle_drop_empire_edge(scene_pos) 
+            else:
+                print(f"Unknown kind: {kind}")
 
     # ---------- DROP HANDLER ----------
     def handle_icon_drop(self, scene_pos):
@@ -2993,19 +3090,49 @@ class MainWindow(QMainWindow):
     # ---------- ROUTER ----------
 
     def add_city_icons_to_list(self):
+        """Populate the list widget with selectable elements using the new graphics system."""
         self.ui.listWidget.clear()
+        self.selectable_elements.clear()
+        
         for el in self.state.elements:
             # Skip disabled elements
             if not el.get("enabled", True):
                 continue
 
+            # Create SelectableElement from the old format
+            pixmap = self.pil_to_qpixmap(el["pil"])
+            
+            # Determine graphics type based on data type
+            if isinstance(el["kind"], ed.CityType):
+                graphics_type = GraphicsObjectType.CITY
+            elif el["kind"] == EmpObjTypes.EMPIRE_EDGE:
+                graphics_type = GraphicsObjectType.BORDER_EDGE
+            else:
+                # For now, skip unknown types
+                continue
+                
+            selectable_element = SelectableElement(
+                name=el["name"],
+                pixmap=pixmap,
+                data_type=el["kind"],
+                graphics_type=graphics_type,
+                enabled=el.get("enabled", True)
+            )
+            
+            self.selectable_elements.append(selectable_element)
+
+            # Create list widget item
             item = QListWidgetItem(el["name"])
-            item.setIcon(QIcon(self.pil_to_qpixmap(el["pil"])))
+            item.setIcon(QIcon(pixmap))
             item.setSizeHint(QSize(100, 80))
-            item.setData(
-                Qt.ItemDataRole.UserRole, el["kind"]
-            )  # store the enum directly (EmpCityTypes or EmpObjTypes)
+            # Store reference to our SelectableElement
+            item.setData(Qt.ItemDataRole.UserRole, len(self.selectable_elements) - 1)
             self.ui.listWidget.addItem(item)
+            
+        # Note: Empire edges and trade points are selectable when they're drawn on the scene
+        # but they don't need separate template items in the list widget since they're
+        # created as part of borders and trade routes respectively
+            
         self.ui.listWidget.setIconSize(QSize(64, 64))
 
     def _no_bg_item_alive(self):
@@ -3020,14 +3147,20 @@ class MainWindow(QMainWindow):
         return QPixmap()
 
     def _place_city_marker(self, city, x, y):
-        """Place a city marker at the given top-left coordinates (x, y are top-left for scene placement)."""
+        """Place a city marker using the new graphics system."""
         pm = self._pixmap_for_city(city.city_type)
         if self.bg_item is None:
             return
+            
+        # Use graphics manager to add city
+        graphics_obj = self.graphics_manager.add_city(city, pm, self)
+        
+        # Set up scene item
         offset_x = x - pm.width() // 2
         offset_y = y - pm.height() // 2
         scene_pt = self.bg_item.mapToScene(offset_x, offset_y)
 
+        # Create or update the scene item
         key = id(city)
         if key in self.city_items:
             item = self.city_items[key]
@@ -3050,6 +3183,10 @@ class MainWindow(QMainWindow):
                 print(f"WARNING: No kind mapping found for city.city_type = {city.city_type}")
             self.scene.addItem(item)
             self.city_items[key] = item
+            
+        # Store the scene item in the graphics object
+        graphics_obj.city_item = item
+        graphics_obj.scene_items = [item]
 
         # Apply current interactivity state (pointer on hover only when not dragging)
         self._apply_item_interactivity(item, enable=not self.is_dragging)
@@ -3080,10 +3217,13 @@ class MainWindow(QMainWindow):
                     self.city_items.pop(key, None)
 
     def _remove_city_marker(self, city):
-        """Remove the scene item for this city, if it exists."""
+        """Remove the scene item for this city using the new graphics system."""
         key = id(city)
 
-        # Remove city icon
+        # Remove from graphics manager
+        self.graphics_manager.remove_city(city)
+
+        # Remove city icon (legacy cleanup)
         item = self.city_items.pop(key, None)
         if item is not None:
             self.scene.removeItem(item)
@@ -3589,17 +3729,22 @@ class MainWindow(QMainWindow):
         return city
 
     def handle_city_drop(self, scene_pos):
+        """Handle dropping a city using the new graphics system."""
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
             self._show_no_background_warning()
             return
         x, y = xy
 
-        kind = self.selected_kind
-        ctype = ed.CityType(kind)
+        # Get city type from selected graphics object or fall back to legacy
+        if self.selected_list_element:
+            ctype = self.selected_list_element.data_type
+        else:
+            kind = self.selected_kind
+            ctype = ed.CityType(kind)
 
         # OUR city: single instance with move-confirmation
-        if kind == ed.CityType.OURS:
+        if ctype == ed.CityType.OURS:
             has_ours, ours = self.state.has_our_city()
             if has_ours:
                 resp = self._show_move_city_dialog(ours, x, y)
@@ -3611,24 +3756,35 @@ class MainWindow(QMainWindow):
                 self.mark_unsaved_changes()  # Mark as unsaved after moving city
                 # Use unified method to re-add the moved city
                 self._add_city_to_empire(ours, force_add=False)
+                # Ensure cursor and dragging state are cleared after successful city move
+                self.set_drawing_cursor(False)
+                self.is_dragging = False
+                self.deselect_all()
                 return
 
             # Create new "Our City" with center coordinates
             ours = ed.City(name="Our City", x=x, y=y, city_type=ed.CityType.OURS, sells=[])
             self._add_city_to_empire(ours, force_add=True)
+            # Ensure cursor and dragging state are cleared after successful city creation
+            self.set_drawing_cursor(False)
+            self.is_dragging = False
+            self.deselect_all()
             return
 
         # Other city types: create freely
-
-        default_name = ed.CityType(kind).value
+        default_name = ed.CityType(ctype).value
         # Store center coordinates in city data
-        # corrected
         city = ed.City(name=default_name, x=x, y=y, city_type=ctype)
 
         if ctype in (ed.CityType.TRADE, ed.CityType.FUTURE_TRADE):
             city.trade_route = ed.TradeRoute(cost=500, r_type=ed.TradeRouteType.LAND)
         self._add_city_to_empire(city, force_add=True)
         self.render_trade_route(city)
+        
+        # Ensure cursor and dragging state are cleared after successful city drop
+        self.set_drawing_cursor(False)
+        self.is_dragging = False
+        self.deselect_all()
 
     # -------------------------------------------------------
     # City Name Label Management
@@ -3795,8 +3951,13 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------
 
     def toggle_cities_visibility(self):
-        """Toggle visibility of all city markers."""
+        """Toggle visibility of all city markers using the new graphics system."""
         visible = self.ui.actionViewOption1.isChecked()
+        
+        # Use graphics manager
+        self.graphics_manager.set_cities_visibility(visible)
+        
+        # Legacy handling
         for item in self.city_items.values():
             try:
                 item.setVisible(visible)
