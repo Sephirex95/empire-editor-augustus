@@ -88,12 +88,12 @@ class SettingsDialog(QDialog):
         form.addRow("Augustus User Directory:", self._row(self.folder2_edit, self.folder2_btn))
 
         # Int + enable checkbox
-        self.int_enable_chk = QCheckBox("Enable Trade Point snapping")
+        self.int_enable_chk = QCheckBox("TradePoint snapping on refresh:")
         self.int_spin = QSpinBox()
         self.int_spin.setRange(0, 100)
         self.int_spin.setSingleStep(1)
         self.int_spin.setSuffix(" px")
-        self.int_spin.setToolTip("Snap distance used when 'Enable Trade Point snapping' is checked")
+        self.int_spin.setToolTip("Snap distance used when 'TradePoint snapping on refresh' is checked")
         self.int_enable_chk.toggled.connect(self.int_spin.setEnabled)
         form.addRow(self.int_enable_chk, self.int_spin)
 
@@ -205,6 +205,9 @@ class Ui_MainWindow(object):
         self.actionEmpireProperties = QAction(MainWindow)
         self.actionEmpireProperties.setObjectName("actionEmpireProperties")
 
+        self.actionEmpireSnap = QAction(MainWindow)
+        self.actionEmpireSnap.setObjectName("actionEmpireSnap")
+
         self.actionOptions = QAction(MainWindow)
         self.actionOptions.setObjectName("actionOptions")
         self.actionAbout = QAction(MainWindow)
@@ -308,6 +311,7 @@ class Ui_MainWindow(object):
         self.menuFile.addAction(self.actionSave)
 
         # Empire properties
+        self.menuEmpireProperties.addAction(self.actionEmpireSnap)
         self.menuEmpireProperties.addAction(self.actionSelect_background_Image)
         self.menuEmpireProperties.addAction(self.actionEmpireProperties)
 
@@ -347,7 +351,7 @@ class Ui_MainWindow(object):
 
         # Menus
         self.menuFile.setTitle(_t("MainWindow", "File", None))
-        self.menuEmpireProperties.setTitle(_t("MainWindow", "Empire properties", None))
+        self.menuEmpireProperties.setTitle(_t("MainWindow", "Empire", None))
         self.menuView.setTitle(_t("MainWindow", "View", None))
         self.menuDefaultCities.setTitle(_t("MainWindow", "Default Cities", None))
         self.menuDefaultCities.setEnabled(False)  # Disabled by default
@@ -361,6 +365,7 @@ class Ui_MainWindow(object):
         self.actionSave.setText(_t("MainWindow", "Save Empire XML", None))
         self.actionSelect_background_Image.setText(_t("MainWindow", "Select background Image", None))
         self.actionEmpireProperties.setText(_t("MainWindow", "Empire Properties", None))
+        self.actionEmpireSnap.setText(_t("MainWindow", "Snap Trade Points", None))
         self.actionOptions.setText(_t("MainWindow", "Options…", None))
         self.actionAbout.setText(_t("MainWindow", "About", None))
 

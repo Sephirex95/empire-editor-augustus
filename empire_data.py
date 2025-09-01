@@ -7,21 +7,25 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 import re
 
-EDITOR_VERSION: float = 0.27          # bump here
-EDITOR_SIGNATURE = "sephirex95"       # legacy header marker
+EDITOR_VERSION: float = 0.29  # bump here
+EDITOR_SIGNATURE = "sephirex95"  # legacy header marker
+
 
 def get_editor_version() -> float:
     return float(EDITOR_VERSION)
+
 
 EMPIRE_EDITOR_HEADER_TEMPLATE = """[empire_editor_version = {version}]
 Made with EmpireEditor for Augustus by Sephirex95
 https://github.com/Sephirex95/empire-editor-augustus
 Empire maps made and generously shared by Areldir"""
 
+
 def _render_editor_header_comment(version_float: float) -> str:
     # write as short string (no trailing zeros unless needed)
     s = f"{version_float}".rstrip("0").rstrip(".") if "." in f"{version_float}" else f"{version_float}"
     return EMPIRE_EDITOR_HEADER_TEMPLATE.format(version=s)
+
 
 def _extract_editor_version(xml_text: str, root) -> float | None:
     """Try root attribute first, then header comment. Return float or None."""
@@ -37,9 +41,11 @@ def _extract_editor_version(xml_text: str, root) -> float | None:
         return float(m.group(1))
     return None
 
+
 def _has_editor_signature(xml_text: str) -> bool:
     low = xml_text.lower()
     return (EDITOR_SIGNATURE in low) or ("empireeditor" in low)
+
 
 # ---------- Enums map 1:1 to XML attribute values ----------
 
@@ -80,13 +86,15 @@ class TradeRouteType(str, Enum):
     LAND = "land"
     SEA = "sea"
 
+
 class EmpBackgroundTypes(Enum):
     BIG_MAP = auto()
     SOUTH_MAP = auto()
     NORTH_MAP = auto()
-    CUSTOM = auto()  
-    LEGACY = auto()  
+    CUSTOM = auto()
+    LEGACY = auto()
     NONE = auto()  # No background set
+
 
 class ResourceType(str, Enum):
     WHEAT = "wheat"
@@ -111,20 +119,23 @@ class ResourceType(str, Enum):
     # CONCRETE = "concrete"   # not storable
     BRICKS = "bricks"
     # DENARII = "denarii"     # not storable unless in ya pocket mate
-    # TROOPS = "troops"       # not storable unless in barracks lmao 
+    # TROOPS = "troops"       # not storable unless in barracks lmao
 
 
 # ---------- Value objects ----------
 
+
 @dataclass
 class Ornament:
     """<ornament type="...">"""
+
     ornament_type: OrnamentType
 
 
 @dataclass
 class Edge:
     """<edge x="" y="" hidden="true|false">"""
+
     x: int
     y: int
     hidden: bool = False
@@ -133,12 +144,29 @@ class Edge:
 @dataclass
 class Border:
     """<border density=""> <edge/>* </border>"""
+
     density: Optional[int] = 50  # defaults to 50 per docs
     edges: List[Edge] = field(default_factory=list)
+
+    def add_vertex_after(self, edge: Edge):
+        """Add a new vertex halfway between the given edge and the next edge in the border."""
+        if edge not in self.edges:
+            return
+        index = self.edges.index(edge)
+        # Wrap around if edge is the last one
+        next_index = (index + 1) % len(self.edges)
+        next_edge = self.edges[next_index]
+        mid_x = (edge.x + next_edge.x) / 2.0
+        mid_y = (edge.y + next_edge.y) / 2.0
+
+        new_edge = Edge(x=mid_x, y=mid_y, hidden=False)
+        self.edges.insert(index + 1, new_edge)
+
 
 @dataclass
 class Resource:
     """<resource type="" amount=""> (amount optional, defaults to 1; ours can omit)"""
+
     resource_type: ResourceType
     amount: Optional[int] = 1  # per docs; for 'ours' can be omitted
 
@@ -150,18 +178,34 @@ class Resource:
 @dataclass
 class TradePoint:
     """<point x="" y=""> inside <trade_points>"""
+
     x: int
     y: int
-    
+
+
 @dataclass
 class TradeRoute:
     cost: int
     r_type: TradeRouteType
     trade_points: List[TradePoint] = field(default_factory=list)
 
+    def create_tradepoint_after(self, point: TradePoint):
+        if point not in self.trade_points:
+            return
+        index = self.trade_points.index(point)
+        next_index = (index + 1) % len(self.trade_points)
+        next_point = self.trade_points[next_index]
+        mid_x = (point.x + next_point.x) / 2.0
+        mid_y = (point.y + next_point.y) / 2.0
+
+        new_point = TradePoint(x=mid_x, y=mid_y)
+        self.trade_points.insert(index + 1, new_point)
+
+
 @dataclass
 class City:
     """<city ...> with optional <buys>, <sells>, <trade_points>"""
+
     name: str = "City Name"
     x: int = 0
     y: int = 0
@@ -178,6 +222,7 @@ class City:
 @dataclass
 class Battle:
     """<battle x="" y="">"""
+
     x: int
     y: int
 
@@ -185,12 +230,14 @@ class Battle:
 @dataclass
 class InvasionPath:
     """<path> <battle/>* </path> inside <invasion_paths>"""
+
     battles: List[Battle] = field(default_factory=list)
 
 
 @dataclass
 class Waypoint:
     """<waypoint num_months="" x="" y="">"""
+
     num_months: int
     x: int
     y: int
@@ -213,6 +260,7 @@ class DistantBattlePath:
         ...
     </path>
     """
+
     path_type: DistantPathType
     start_x: int
     start_y: int
@@ -222,6 +270,7 @@ class DistantBattlePath:
 @dataclass
 class Map:
     """<map image="" x_offset="" y_offset="" width="" height="">"""
+
     image: str = ""
     x_offset: int = 0
     y_offset: int = 0
@@ -234,15 +283,26 @@ class Map:
 
 # ---------- Root ----------
 
+
 @dataclass
 class Empire:
     global editor_version
-    def __init__(self, version=1, ornaments=None, border=None, cities=None,
-                     invasion_paths=None, distant_battle_paths=None, map_info=None,
-                     show_ireland=True, editor_version: float | None = None):
+
+    def __init__(
+        self,
+        version=1,
+        ornaments=None,
+        border=None,
+        cities=None,
+        invasion_paths=None,
+        distant_battle_paths=None,
+        map_info=None,
+        show_ireland=True,
+        editor_version: float | None = None,
+    ):
         self.version = int(version)
         self.editor_version: float = float(editor_version) if editor_version is not None else get_editor_version()
-    
+
         self.ornaments = list(ornaments) if ornaments else []
         self.border = border
         self.cities = list(cities) if cities else []
@@ -262,10 +322,15 @@ class Empire:
     def _to_element(self):
         root = Element("empire")
         root.set("version", str(self.version))
-        # write editor version as attribute too 
-        root.set("editor_version", f"{self.editor_version}".rstrip("0").rstrip(".") if "." in f"{self.editor_version}" else f"{self.editor_version}")
-    
-        if hasattr(self, 'show_ireland') and self.show_ireland:
+        # write editor version as attribute too
+        root.set(
+            "editor_version",
+            f"{self.editor_version}".rstrip("0").rstrip(".")
+            if "." in f"{self.editor_version}"
+            else f"{self.editor_version}",
+        )
+
+        if hasattr(self, "show_ireland") and self.show_ireland:
             root.set("show_ireland", "true")
 
         # Add map element for version > 1
@@ -276,7 +341,7 @@ class Empire:
             map_el.set("y_offset", str(self.map_info.y_offset))
             map_el.set("width", str(self.map_info.width))
             map_el.set("height", str(self.map_info.height))
-            
+
             coords_el = SubElement(map_el, "coordinates")
             coords_el.set("relative", "true" if self.map_info.coordinates_relative else "false")
             coords_el.set("x_offset", str(self.map_info.coordinates_x_offset))
@@ -317,7 +382,7 @@ class Empire:
                             pt = SubElement(tp_el, "point")
                             pt.set("x", str(p.x))
                             pt.set("y", str(p.y))
-    
+
                 if c.buys:
                     buys_el = SubElement(c_el, "buys")
                     for r in c.buys:
@@ -325,16 +390,16 @@ class Empire:
                         r_el.set("type", ResourceType(r.resource_type).value)
                         if r.amount is not None:
                             r_el.set("amount", str(r.amount))
-    
+
                 if c.sells:
                     sells_el = SubElement(c_el, "sells")
-                    omit_amount = (c.city_type == CityType.OURS)
+                    omit_amount = c.city_type == CityType.OURS
                     for r in c.sells:
                         r_el = SubElement(sells_el, "resource")
                         r_el.set("type", ResourceType(r.resource_type).value)
                         if not omit_amount and r.amount is not None:
                             r_el.set("amount", str(r.amount))
-        
+
         # Ensure cities element is never self-closing by adding text content
         if not self.cities:
             cities_el.text = "\n    "
@@ -375,17 +440,17 @@ class Empire:
         else:
             body = tostring(root, encoding=encoding).decode(encoding)
         parts = []
-        if include_declaration: 
+        if include_declaration:
             parts.append('<?xml version="1.0"?>')
-        if include_doctype:     
+        if include_doctype:
             parts.append("<!DOCTYPE empire>")
-    
+
         # Dynamic header with editor version as string
         header = _render_editor_header_comment(self.editor_version)
         parts.append("<!--")
         parts += [f"  {line}" for line in header.strip().split("\n")]
         parts.append("-->")
-    
+
         parts.append(body)
         return "\n".join(parts)
 
@@ -410,9 +475,9 @@ class Empire:
         root = tree.getroot()
         if root.tag != "empire":
             raise ValueError("Root tag must be <empire>")
-    
+
         version = int(root.get("version"))
-    
+
         # NEW: determine editor_version with precedence + fallbacks
         ev = _extract_editor_version(xml_text, root)
         if ev is None:
@@ -422,7 +487,7 @@ class Empire:
             else:
                 # Not your file → assume current editor version
                 ev = get_editor_version()
-        
+
         # Parse show_ireland attribute
         show_ireland = root.get("show_ireland", "false").lower() == "true"
 
@@ -436,7 +501,7 @@ class Empire:
                 y_offset = int(map_el.get("y_offset"))
                 width = int(map_el.get("width"))
                 height = int(map_el.get("height"))
-                
+
                 coords_el = cls._child(map_el, "coordinates")
                 if coords_el is not None:
                     coordinates_relative = cls._parse_bool(coords_el.get("relative"))
@@ -446,7 +511,7 @@ class Empire:
                     coordinates_relative = False
                     coordinates_x_offset = 0
                     coordinates_y_offset = 0
-                
+
                 map_info = Map(
                     image=image,
                     x_offset=x_offset,
@@ -455,7 +520,7 @@ class Empire:
                     height=height,
                     coordinates_relative=coordinates_relative,
                     coordinates_x_offset=coordinates_x_offset,
-                    coordinates_y_offset=coordinates_y_offset
+                    coordinates_y_offset=coordinates_y_offset,
                 )
 
         # ornaments
@@ -496,12 +561,12 @@ class Empire:
                 try:
                     tp_el = cls._child(c_el, "trade_points")
                 except:
-                    print("breakpoint")
+                    pass
                 if tp_el is not None:
                     if ev > 0.20:
-                        trade_points_list = reversed(tp_el.findall("point")) 
-                        #0.20 and earlier versions bug: tradepoints in wrong order
-                        #program does them trade->ours, engine does ours->trade
+                        trade_points_list = reversed(tp_el.findall("point"))
+                        # 0.20 and earlier versions bug: tradepoints in wrong order
+                        # program does them trade->ours, engine does ours->trade
                     else:
                         trade_points_list = tp_el.findall("point")
                     for pt in trade_points_list:
@@ -530,8 +595,7 @@ class Empire:
                         # omit amount for home city accepted; None is fine
                         sells.append(Resource(resource_type=rtype, amount=int(amount) if amount is not None else None))
 
-                city = City(name=name,  x=x,  y=y,  city_type = ctype,
-                            buys=buys, sells=sells, trade_route=trade_route)
+                city = City(name=name, x=x, y=y, city_type=ctype, buys=buys, sells=sells, trade_route=trade_route)
                 cities.append(city)
 
         # invasion paths
@@ -555,21 +619,47 @@ class Empire:
                 waypoints = []
                 for w in p_el.findall("waypoint"):
                     waypoints.append(Waypoint(int(w.get("num_months")), int(w.get("x")), int(w.get("y"))))
-                distant_battle_paths.append(DistantBattlePath(path_type=ptype, start_x=start_x, start_y=start_y, waypoints=waypoints))
+                distant_battle_paths.append(
+                    DistantBattlePath(path_type=ptype, start_x=start_x, start_y=start_y, waypoints=waypoints)
+                )
 
-        emp = Empire(version, ornaments, border, cities, invasion_paths,
-                     distant_battle_paths, map_info, show_ireland,
-                     editor_version=ev)
+        emp = Empire(
+            version,
+            ornaments,
+            border,
+            cities,
+            invasion_paths,
+            distant_battle_paths,
+            map_info,
+            show_ireland,
+            editor_version=ev,
+        )
         return emp
-    
+
     @classmethod
     def read_xml(cls, path):
         with open(path, "r", encoding="utf-8") as f:
             data = f.read()
         return cls.from_xml_string(data)
-    
+
+
 __all__ = [
-    "OrnamentType", "CityType", "ResourceType", "TradeRouteType", "DistantPathType",
-    "Ornament", "Edge", "Border", "Resource", "TradePoint", "TradeRoute",
-    "City", "Battle", "InvasionPath", "Waypoint", "DistantBattlePath",
-    "Map", "Empire"]
+    "OrnamentType",
+    "CityType",
+    "ResourceType",
+    "TradeRouteType",
+    "DistantPathType",
+    "Ornament",
+    "Edge",
+    "Border",
+    "Resource",
+    "TradePoint",
+    "TradeRoute",
+    "City",
+    "Battle",
+    "InvasionPath",
+    "Waypoint",
+    "DistantBattlePath",
+    "Map",
+    "Empire",
+]
