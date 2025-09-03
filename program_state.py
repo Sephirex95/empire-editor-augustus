@@ -1,10 +1,11 @@
-#program_state.py
+# program_state.py
 # -*- coding: utf-8 -*-
 """
 Created on Wed Aug 27 22:26:08 2025
 
 @author: sephirex95
 """
+
 import os
 import sys
 from PySide6.QtCore import QSettings
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import empire_data as ed
 from sg_reader_light import SgFileReader
 from enum import Enum, auto
+
 
 class EmpObjTypes(Enum):
     EMPIRE_EDGE = auto()
@@ -25,6 +27,7 @@ class EmpObjTypes(Enum):
     NATIVES = auto()
     DISTANT_BATTLE = auto()
 
+
 class ProgramState:
     def __init__(self):
         self.images = {}
@@ -32,7 +35,7 @@ class ProgramState:
         self.city_icons_map = {}
         self.init_failed = False
         self.current_empire_object = None
-        
+
         # paths + feature fields
         self.c3_main_path = ""
         self.augustus_user_path = ""
@@ -40,29 +43,29 @@ class ProgramState:
         self.augustus_community_image_path = ""
         self.snap_enabled = False
         self.snap_distance = 0
-        
+
         config_path = os.path.join(os.path.dirname(__file__), "empire_editor.cfg")
         self.settings = QSettings(config_path, QSettings.Format.IniFormat)
         # --- SLAP IN DEFAULTS (only if not set yet) ---
         s = self.settings
         s.beginGroup("features")
         if s.value("tp_snap_enabled") is None:
-            s.setValue("tp_snap_enabled", True)   
+            s.setValue("tp_snap_enabled", True)
         if s.value("tp_snap_distance") is None:
             s.setValue("tp_snap_distance", 5)
         s.endGroup()
         s.sync()
-        
-        #instaload
-        self.snap_enabled  = s.value("features/tp_snap_enabled", True, bool)
+
+        # instaload
+        self.snap_enabled = s.value("features/tp_snap_enabled", True, bool)
         self.snap_distance = s.value("features/tp_snap_distance", 5, int)
-        
+
     def init(self):
         if not self.load_c3_folder():
             self.init_failed = True
             return False
         self.select_augustus_user_directory()
-        self.apply_settings_from_store()   # keep local fields in sync
+        self.apply_settings_from_store()  # keep local fields in sync
         self.load_images()
         return not self.init_failed
 
@@ -94,15 +97,15 @@ class ProgramState:
     def _create_my_empires_folder(self, settings):
         """Helper function to create my_empires folder and set default_save_folder setting."""
         # Determine the correct application root directory
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             # Running as PyInstaller executable - use the directory containing the .exe
             app_root = os.path.dirname(sys.executable)
         else:
             # Running in normal Python environment
             app_root = os.path.dirname(os.path.abspath(__file__))
-        
+
         my_empires_folder = os.path.join(app_root, "my_empires")
-        
+
         try:
             os.makedirs(my_empires_folder, exist_ok=True)
             settings.setValue("default_save_folder", my_empires_folder)
@@ -124,21 +127,18 @@ class ProgramState:
                 "Select Caesar 3 Folder",
                 "Please select your Caesar 3 installation folder.\n\n"
                 "This should be the folder that contains C3.sg2 and augustus.exe files.",
-                QMessageBox.StandardButton.Ok
+                QMessageBox.StandardButton.Ok,
             )
             folder = QFileDialog.getExistingDirectory(
-                None,
-                "Select Caesar 3 Main Directory",
-                "",
-                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+                None, "Select Caesar 3 Main Directory", "", QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
             )
             if folder and self.validate_c3_directory(folder):
                 s.setValue("c3_main_folder", folder)
                 self.c3_main_path = folder
-                
+
                 # Create 'my_empires' folder using helper function
                 self._create_my_empires_folder(s)
-                
+
                 return True
             else:
                 QMessageBox.critical(
@@ -159,11 +159,11 @@ class ProgramState:
                 None,
                 "Missing Files",
                 "The following required files are missing:\n" + "\n".join(missing),
-                QMessageBox.StandardButton.Ok
+                QMessageBox.StandardButton.Ok,
             )
             return False
         return True
-    
+
     def select_augustus_user_directory(self) -> bool:
         """
         Politely ask the user if they'd like to select their Augustus *user* directory.
@@ -176,11 +176,11 @@ class ProgramState:
         if existing and os.path.isdir(existing):
             self.augustus_user_path = existing
             return True
-    
+
         # If there was a stale path, let the user know (without forcing them).
         if existing and not os.path.isdir(existing):
             print(f"Previously configured Augustus user folder '{existing}' no longer exists.")
-    
+
         # Ask nicely (do not force selection).
         reply = QMessageBox.question(
             None,
@@ -188,82 +188,66 @@ class ProgramState:
             "Would you like to select your Augustus user directory?\n\n"
             "This will help sync your Augustus and map editor with the Empire Editor outputs.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
+            QMessageBox.StandardButton.Yes,
         )
-    
+
         if reply != QMessageBox.StandardButton.Yes:
             # User declined; that's okay—just return False to signal nothing was set.
             return False
-    
+
         # Let the user pick a directory (optional, but requested).
         folder = QFileDialog.getExistingDirectory(
-            None,
-            "Select Augustus User Directory",
-            "",
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            None, "Select Augustus User Directory", "", QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
-    
+
         if not folder:
             # User cancelled the file dialog; nothing selected.
             return False
-    
+
         if self.validate_augustus_user_directory(folder):
             s.setValue("augustus_user_folder", folder)
             self.augustus_user_path = folder
             self.augustus_community_image_path = os.path.join(folder, "community", "image")
             self.augustus_editor_empires_path = os.path.join(folder, "editor", "empires")
             return True
-    
+
         # Folder chosen but failed validation.
         QMessageBox.critical(
-            None,
-            "Invalid Directory",
-            "Please select a valid Augustus user directory.",
-            QMessageBox.StandardButton.Ok
+            None, "Invalid Directory", "Please select a valid Augustus user directory.", QMessageBox.StandardButton.Ok
         )
         return False
-    
-    
+
     def validate_augustus_user_directory(self, path: str) -> bool:
         """
         Validate an Augustus *user* directory.
         Because user directories differ by OS/installs, we accept the directory if it
         contains at least one recognizable Augustus user artifact.
-    
+
         Accepted markers (any one is enough):
           - A 'maps', 'saves', 'savegames', or 'mods' subfolder
-    
+
         Shows a message box listing what was expected when validation fails.
         """
         if not path or not os.path.isdir(path):
             QMessageBox.critical(
-                None,
-                "Invalid Directory",
-                "The selected path is not a directory.",
-                QMessageBox.StandardButton.Ok
+                None, "Invalid Directory", "The selected path is not a directory.", QMessageBox.StandardButton.Ok
             )
             return False
-    
+
         expected_dirs = ["editor", "community", "savegames"]
-    
+
         has_dir_marker = any(os.path.isdir(os.path.join(path, d)) for d in expected_dirs)
 
-    
         if has_dir_marker:
             return True
-    
+
         # Nothing recognizable found; explain what we looked for.
         missing_msg = (
             "The selected folder does not look like an Augustus user directory.\n\n"
             "Have not found the following subfolders:\n"
             f" {', '.join(expected_dirs)}\n"
         )
-        QMessageBox.warning(
-            None,
-            "Missing Expected Items",
-            missing_msg,
-            QMessageBox.StandardButton.Ok
-        )
+        QMessageBox.warning(None, "Missing Expected Items", missing_msg, QMessageBox.StandardButton.Ok)
         return False
 
     def load_images(self):
@@ -272,23 +256,25 @@ class ProgramState:
             reader = SgFileReader(c3_sg_path)
             self.images = reader.load_filtered("The_empire", "empire_bits", "empire_panels")
             self.create_selectable_elements()
-    
+
     def create_selectable_elements(self):
         try:
+
             def crop5x5(img):
                 return img.crop((0, 0, 5, 5))  # (left, top, right, bottom), bottom is exclusive
+
             # augustus assets used via layering:
             bits = self.images["empire_bits"]
-            self.images["sea_dot"]  = crop5x5(bits[102])
+            self.images["sea_dot"] = crop5x5(bits[102])
             self.images["land_dot"] = crop5x5(bits[94])
             # Store flag images separately
             self.images["our_flag"] = bits[2]
-            self.images["trade_flag"] = bits[9] 
+            self.images["trade_flag"] = bits[9]
             self.images["roman_flag"] = bits[16]
             self.images["distant_flag"] = bits[23]
-            
+
             # Helper function to overlay flag on city icon
-            def overlay_flag_on_city(city_pil, flag_pil, x_offset = 0, y_offset = 0):
+            def overlay_flag_on_city(city_pil, flag_pil, x_offset=0, y_offset=0):
                 """Overlay a flag image on the top-right corner of a city icon."""
                 # Create a copy of the city image to avoid modifying the original
                 result = city_pil.copy()
@@ -296,50 +282,52 @@ class ProgramState:
                 flag_x = x_offset
                 flag_y = y_offset
                 # Paste flag with alpha blending if possible
-                if flag_pil.mode == 'RGBA':
+                if flag_pil.mode == "RGBA":
                     result.paste(flag_pil, (flag_x, flag_y), flag_pil)
                 else:
                     result.paste(flag_pil, (flag_x, flag_y))
-                
+
                 return result
-            
+
             # Create city icons with flags overlaid
             our_city_base = bits[0]
             roman_city_base = bits[7]
             distant_city_base = bits[21]
-            
+
             # Create flagged versions
-            our_city_with_flag = overlay_flag_on_city(our_city_base, self.images["our_flag"],17,5)
-            roman_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["roman_flag"],22,5)
-            trade_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["trade_flag"],22,5)    
-            distant_city_with_flag = overlay_flag_on_city(distant_city_base, self.images["distant_flag"],12,5)
-            
+            our_city_with_flag = overlay_flag_on_city(our_city_base, self.images["our_flag"], 17, 5)
+            roman_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["roman_flag"], 22, 5)
+            trade_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["trade_flag"], 22, 5)
+            distant_city_with_flag = overlay_flag_on_city(distant_city_base, self.images["distant_flag"], 12, 5)
+
             # images from vanilla files
             self.elements = [
-                {"name": "Our City",         "pil": our_city_with_flag,    "kind": ed.CityType.OURS, "enabled": True},
-                {"name": "Roman City",       "pil": roman_city_with_flag,  "kind": ed.CityType.ROMAN, "enabled": True},
-                {"name": "Trade City",       "pil": trade_city_with_flag,  "kind": ed.CityType.TRADE, "enabled": True},
-                {"name": "Distant City",     "pil": distant_city_with_flag,"kind": ed.CityType.DISTANT, "enabled": True},
-                {"name": "Empire Edge",      "pil": bits[71],  "kind": EmpObjTypes.EMPIRE_EDGE, "enabled": True},
+                {"name": "Our City", "pil": our_city_with_flag, "kind": ed.CityType.OURS, "enabled": True},
+                {"name": "Roman City", "pil": roman_city_with_flag, "kind": ed.CityType.ROMAN, "enabled": True},
+                {"name": "Trade City", "pil": trade_city_with_flag, "kind": ed.CityType.TRADE, "enabled": True},
+                {"name": "Distant City", "pil": distant_city_with_flag, "kind": ed.CityType.DISTANT, "enabled": True},
+                {"name": "Empire Edge", "pil": bits[71], "kind": EmpObjTypes.EMPIRE_EDGE, "enabled": True},
                 # Hidden items (same icon different function)
-                {"name": "Vulnerable City",  "pil": roman_city_with_flag,  "kind": ed.CityType.VULNERABLE, "enabled": False},
-                {"name": "Future Trade City","pil": trade_city_with_flag,  "kind": ed.CityType.FUTURE_TRADE, "enabled": False},
-                # Disabled items (commented out for now)
-
-                {"name": "Distant Battle","pil": bits[28],  "kind": EmpObjTypes.DISTANT_BATTLE, "enabled": False},
-                {"name": "Our Legion",    "pil": bits[36],  "kind": EmpObjTypes.OUR_LEGION, "enabled": False},
-                {"name": "Natives",       "pil": bits[52],  "kind": EmpObjTypes.NATIVES, "enabled": False},
+                {
+                    "name": "Vulnerable City",
+                    "pil": roman_city_with_flag,
+                    "kind": ed.CityType.VULNERABLE,
+                    "enabled": False,
+                },
+                {
+                    "name": "Future Trade City",
+                    "pil": trade_city_with_flag,
+                    "kind": ed.CityType.FUTURE_TRADE,
+                    "enabled": False,
+                },
+                # Disabled items
+                {"name": "Distant Battle", "pil": bits[28], "kind": EmpObjTypes.DISTANT_BATTLE, "enabled": False},
+                {"name": "Our Legion", "pil": bits[36], "kind": EmpObjTypes.OUR_LEGION, "enabled": False},
+                {"name": "Natives", "pil": bits[52], "kind": EmpObjTypes.NATIVES, "enabled": False},
             ]
         except (KeyError, IndexError):
             self.init_failed = True
             QMessageBox.critical(None, "Error", "Error loading selectable elements.", QMessageBox.StandardButton.Ok)
-            
-    def reset_state(self):
-        #needs an update - should be used but currently isnt
-        self.images.clear()
-        self.selected_empire_image = None
-        self.city_icons_map.clear()
-        self.init_failed = False
 
     def has_our_city(self):
         """Return (True, city) if an 'ours' city exists, else (False, None)."""
@@ -376,5 +364,3 @@ class ProgramState:
         """Create a completely new, clean empire."""
         # Always start with a clean version 1 empire (no map_info)
         self.current_empire_object = ed.Empire(version=1)
-    
-    

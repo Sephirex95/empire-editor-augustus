@@ -398,6 +398,8 @@ class MainWindow(QWI.QMainWindow):
         except Exception as e:
             log.error(e)
             self.show_message(UIS.ERROR, UIS.LOAD_ERROR.format(error=str(e)), 2)  # Critical, Ok only
+        finally:
+            self.update_ui_state()
 
     def save_empire_xml(self):
         """Save current empire to XML file, optionally into Augustus user folders if configured."""
@@ -585,11 +587,12 @@ class MainWindow(QWI.QMainWindow):
     # %% ui and drawing
     def update_ui_state(self):
         """Update UI elements based on current empire state."""
-        has_empire = self.state and self.state.current_empire_object is not None
+        has_empire = self.state and self.state.current_empire_object is not None and self.state.has_any_data()
 
         # Enable/disable Empire Properties action based on whether we have an empire
-        if hasattr(self.ui, "actionEmpireProperties"):
-            self.ui.menuEmpireProperties.setEnabled(has_empire)
+
+        self.ui.menuEmpireProperties.setEnabled(has_empire)
+        self.ui.actionSave.setEnabled(has_empire)
 
     def _validate_empire_bounds(self, width, height, empire=None, remove_invalid=False):
         """
@@ -1598,9 +1601,12 @@ class MainWindow(QWI.QMainWindow):
 
                 # Add edge actions first
                 for label, callback in edge_actions:
-                    act = QGU.QAction(label, self)
-                    act.triggered.connect(lambda checked=False, cb=callback: cb())
-                    menu.addAction(act)
+                    if label == "---":  # Handle separator
+                        menu.addSeparator()
+                    else:
+                        act = QGU.QAction(label, self)
+                        act.triggered.connect(lambda checked=False, cb=callback: cb())
+                        menu.addAction(act)
 
                 # Add separator if we have both types
                 if edge_actions and parent_actions:
@@ -1608,9 +1614,12 @@ class MainWindow(QWI.QMainWindow):
 
                 # Add parent actions
                 for label, callback in parent_actions:
-                    act = QGU.QAction(label, self)
-                    act.triggered.connect(lambda checked=False, cb=callback: cb())
-                    menu.addAction(act)
+                    if label == "---":  # Handle separator
+                        menu.addSeparator()
+                    else:
+                        act = QGU.QAction(label, self)
+                        act.triggered.connect(lambda checked=False, cb=callback: cb())
+                        menu.addAction(act)
 
                 menu.exec(global_pos)
 
@@ -2281,17 +2290,26 @@ class MainWindow(QWI.QMainWindow):
             self.default_cities_manager.populate_menu()
 
             # Persist map info (only pass a file path if chosen via dialog)
-            self._update_empire_map_info(image_path=image_path if open_dialog else None, pixmap=pixmap)
-
+            self._update_empire_map_info(image_path=image_path if open_dialog else pil_img.filename, pixmap=pixmap)
             # Re-render existing empire elements, if any
+
             if Empire:
                 if hasattr(Empire, "cities"):
                     for city in Empire.cities:
-                        Manager.add_city(city, main_window=self)
+                        try:
+                            Manager.add_city(city, main_window=self)
+                        except Exception as e:
+                            log.error(f"Failed to add city {city.name} at ({city.x},{city.y}): {e}")
                         if city.trade_route is not None:
-                            Manager.add_trade_route(city, self)
+                            try:
+                                Manager.add_trade_route(city, self)
+                            except Exception as e:
+                                log.error(f"Failed to add trade route {e}")
                 if self.empire_border and getattr(Empire, "border", None):
-                    Manager.add_border(Empire.border, self)
+                    try:
+                        Manager.add_border(Empire.border, self)
+                    except Exception as e:
+                        log.error(f"Failed to render empire border: {e}")
 
             return True
 
@@ -2657,18 +2675,24 @@ class MainWindow(QWI.QMainWindow):
 
     def toggle_cities_visibility(self):
         """Toggle visibility of all city markers using the new graphics system."""
+        if Empire is None:
+            return
         visible = self.ui.actionViewOption1.isChecked()
         Manager.set_cities_visibility(visible)
         log.debug(f"Cities visibility: {'ON' if visible else 'OFF'}")
 
     def toggle_trade_routes_visibility(self):
         """Toggle visibility of all trade routes using graphics manager."""
+        if Empire is None:
+            return
         visible = self.ui.actionViewOption2.isChecked()
         Manager.set_trade_routes_visibility(visible)
         log.debug(f"Trade routes visibility: {'ON' if visible else 'OFF'}")
 
     def toggle_border_visibility(self):
         """Toggle visibility of empire border."""
+        if Empire is None:
+            return
         visible = self.ui.actionViewOption3.isChecked()
         Manager.set_border_visibility(visible)
 
@@ -2681,6 +2705,8 @@ class MainWindow(QWI.QMainWindow):
         log.debug(f"Empire border visibility: {'ON' if visible else 'OFF'}")
 
     def update_all_city_labels_from_toggles(self):
+        if Empire is None:
+            return
         mode = self._get_city_label_mode()
         for city in Empire.cities:
             self._apply_city_label_mode(city, mode)
@@ -2691,6 +2717,8 @@ class MainWindow(QWI.QMainWindow):
         Returns:
             int: number of points whose coordinates changed.
         """
+        if Empire is None:
+            return 0
         # Collect a global list of all trade-point objects
         all_points = []
         for city in Empire.cities:

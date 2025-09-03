@@ -53,13 +53,38 @@ class GraphicsObjectBase(ABC):
 
     # ----- abstract API -----
     @abstractmethod
-    def get_context_menu_actions(self) -> List[Tuple[str, callable]]: ...
-    @abstractmethod
     def get_hit_test_items(self) -> List[QGraphicsItem]: ...
     @abstractmethod
     def update_visual_state(self): ...
     @abstractmethod
     def get_cursor_for_operation(self, operation: str) -> QCursor: ...
+
+    # ----- context menu (non-abstract with default implementation) -----
+    def get_context_menu_actions(self) -> List[Tuple[str, callable]]:
+        """Get context menu actions. Override in subclasses. Default returns empty list."""
+        return []
+
+    def combine_context_menus(
+        self,
+        child_actions: List[Tuple[str, callable]],
+        parent_actions: List[Tuple[str, callable]] = None,
+        add_separator: bool = True,
+    ) -> List[Tuple[str, callable]]:
+        """Helper to combine child and parent context menu actions."""
+        if parent_actions is None:
+            parent_actions = []
+
+        if not child_actions:
+            return parent_actions
+        if not parent_actions:
+            return child_actions
+
+        # Combine with separator
+        combined = list(child_actions)
+        if add_separator and child_actions and parent_actions:
+            combined.append(("---", None))  # Separator
+        combined.extend(parent_actions)
+        return combined
 
     # ----- selection / visibility -----
     def set_selected(self, selected: bool):
@@ -566,7 +591,15 @@ class PolychainGraphicsObject(GraphicsObjectBase):
         return self.hit_items
 
     def get_context_menu_actions(self):
-        return []  # Override in subclasses
+        """Base context menu for polychains. Override in subclasses for specific actions."""
+        actions = []
+        if self.selected_edge_index is not None:
+            actions.append(("Add Vertex", self._add_vertex_generic))
+        return actions
+
+    def _add_vertex_generic(self):
+        """Generic vertex addition - override in subclasses for specific implementation."""
+        pass
 
     def get_cursor_for_operation(self, op: str):
         return QCursor(Qt.CursorShape.ArrowCursor)
@@ -731,7 +764,7 @@ class BorderGraphicsObject(PolychainGraphicsObject):
     def get_context_menu_actions(self):
         actions = [("Delete Border", lambda: self.main_window.delete_empire_border() if self.main_window else None)]
         if self.selected_edge_index is not None:
-            actions.insert(0, ("Add Vertex After", self._add_vertex_after_selected))
+            actions.insert(0, ("Add Vertex", self._add_vertex_after_selected))
             actions.insert(1, ("Toggle Edge Hidden", self._toggle_selected_edge_hidden))
         return actions
 
@@ -944,7 +977,24 @@ class TradePointGraphicsObject(GraphicsObjectBase):
             self.scene_items.append(point_item)
 
     def get_context_menu_actions(self):
-        return [("Add Point", self._add_point), ("Delete Point", self._delete_point), ("Edit Route", self._edit_route)]
+        # Trade point specific actions
+        point_actions = [("Add Point", self._add_point), ("Delete Point", self._delete_point)]
+
+        # Get parent route actions
+        route_actions = []
+        if self.parent_route:
+            route_actions = [
+                ("Edit City", self._edit_route),
+                (
+                    "Delete Route",
+                    lambda: self.parent_route._delete_trade_route()
+                    if hasattr(self.parent_route, "_delete_trade_route")
+                    else None,
+                ),
+            ]
+
+        # Combine with separator
+        return self.combine_context_menus(point_actions, route_actions)
 
     def get_hit_test_items(self):
         return [self.point_item] if self.point_item else []
@@ -1009,7 +1059,7 @@ class EmpireEdgeGraphicsObject(GraphicsObjectBase):
 
     def get_context_menu_actions(self):
         return [
-            ("Add vertex", self._add_vertex),
+            ("Add Vertex", self._add_vertex),
             ("Toggle Edge Hidden", self._toggle_edge_hidden),
             ("Delete Edge", self._delete_edge),
         ]
