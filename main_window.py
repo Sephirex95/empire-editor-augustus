@@ -525,6 +525,20 @@ class MainWindow(QWI.QMainWindow):
         for city_obj in Manager.city_objects.values():
             city_obj.update_interactivity(enable)
 
+    def draw_trade_route_from_context(self, city_obj):
+        """Start drawing a trade route from a city via context menu."""
+        if city_obj.trade_route and len(city_obj.trade_route.trade_points) > 0:
+            if self.show_message(UIS.TR_EXISTS, UIS.TR_EXISTS_MSG, 1, 1, 2) != QBTN_YES:
+                return
+            else:
+                # Clear both model and visuals for this specific city
+                city_index = self._get_city_index(city_obj)
+                if city_index is not None:
+                    Manager.remove_trade_route(city_obj)
+                city_obj.trade_route.trade_points = []
+            self.start_trade_route(city_obj)
+        return
+
     def edit_city(self, city_obj):
         snapshot = copy.deepcopy(city_obj)
         dlg = emp_dlg.CityPropertiesDialog(city_obj, self)

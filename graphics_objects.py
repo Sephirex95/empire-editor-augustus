@@ -678,7 +678,22 @@ class CityGraphicsObject(GraphicsObjectBase):
             self.city_item.setCursor(cursor)
 
     def get_context_menu_actions(self):
-        return [("Move City", self._move_city), ("Delete City", self._delete_city), ("Properties", self._edit)]
+        actions = []
+
+        # Only show "Plot Trade Route" for trade cities
+        if self.data_object.city_type in (ed.CityType.TRADE, ed.CityType.FUTURE_TRADE):
+            actions.append(("Plot Trade Route", self._plot_trade_route))
+
+        # Always show these options
+        actions.extend(
+            [
+                ("Move City", self._move_city),
+                ("Delete City", self._delete_city),
+                ("Properties", self._edit),
+            ]
+        )
+
+        return actions
 
     def get_hit_test_items(self):
         return [self.city_item] if self.city_item else []
@@ -697,6 +712,10 @@ class CityGraphicsObject(GraphicsObjectBase):
     def _delete_city(self):
         if self.main_window:
             self.main_window.remove_city(self.data_object)
+
+    def _plot_trade_route(self):
+        if self.main_window:
+            self.main_window.draw_trade_route_from_context(self.data_object)
 
     def _edit(self):
         if self.main_window:
