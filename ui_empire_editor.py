@@ -52,6 +52,8 @@ class SettingsDialog(QDialog):
     INT_ENABLED_KEY = "features/tp_snap_enabled"
     INT_VALUE_KEY = "features/tp_snap_distance"
 
+    DPI_DISABLE_KEY = "features/disable_high_dpi_scaling"
+
     def __init__(self, parent: QWidget | None = None, settings: QSettings | None = None):
         super().__init__(parent)
         self.setWindowTitle("Options")
@@ -105,6 +107,16 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+        self.dpi_chk = QCheckBox("Disable High-DPI scaling (requires restart)")
+
+        def restart_required():
+            QMessageBox.information(
+                self, "Restart required", "Changes to DPI scaling will take effect after restarting the program."
+            )
+
+        self.dpi_chk.clicked.connect(restart_required)
+        root.addWidget(self.dpi_chk)
+
         self._load_settings()
 
     # --- helpers ----------------------------------------------------------
@@ -129,12 +141,15 @@ class SettingsDialog(QDialog):
         folder2 = self.settings.value(self.PATH_KEY_2, "", type=str)
         int_enabled = self.settings.value(self.INT_ENABLED_KEY, False, type=bool)
         int_value = self.settings.value(self.INT_VALUE_KEY, 0, type=int)
-
         self.folder1_edit.setText(folder1)
         self.folder2_edit.setText(folder2)
         self.int_enable_chk.setChecked(bool(int_enabled))
         self.int_spin.setValue(int(int_value))
         self.int_spin.setEnabled(bool(int_enabled))
+
+        # NEW: load dpi flag
+        dpi_disable = self.settings.value(self.DPI_DISABLE_KEY, False, type=bool)
+        self.dpi_chk.setChecked(bool(dpi_disable))
 
     def _validate_dir(self, text: str, label: str) -> tuple[bool, str]:
         text = text.strip()
@@ -145,7 +160,7 @@ class SettingsDialog(QDialog):
             return True, str(p.resolve())
         return False, f"{label} does not exist: {text}"
 
-    def accept(self) -> None:  # type: ignore[override]
+    def accept(self) -> None:
         ok1, norm1 = self._validate_dir(self.folder1_edit.text(), "C3 Main folder")
         ok2, norm2 = self._validate_dir(self.folder2_edit.text(), "Augustus User Directory")
         if not ok1:
@@ -154,13 +169,14 @@ class SettingsDialog(QDialog):
         if not ok2:
             QMessageBox.warning(self, "Invalid directory", norm2)
             return
-
         # Save normalized values
         self.settings.setValue(self.PATH_KEY_1, norm1)
         self.settings.setValue(self.PATH_KEY_2, norm2)
         self.settings.setValue(self.INT_ENABLED_KEY, self.int_enable_chk.isChecked())
         self.settings.setValue(self.INT_VALUE_KEY, int(self.int_spin.value()))
 
+        # NEW: save dpi flag
+        self.settings.setValue(self.DPI_DISABLE_KEY, self.dpi_chk.isChecked())
         super().accept()
 
 

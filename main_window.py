@@ -43,6 +43,14 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)  # full debug for main program
 
+# Load settings before creating QApplication
+s = QCO.QSettings("empire_editor.cfg", QCO.QSettings.IniFormat)
+if s.value("features/disable_high_dpi_scaling", True, bool):
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
+    os.environ["QT_SCALE_FACTOR"] = "1"
+    os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
+
 # ---------------------------------------------
 # MainWindow class
 # ---------------------------------------------

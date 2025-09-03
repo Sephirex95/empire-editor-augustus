@@ -54,11 +54,15 @@ class ProgramState:
         if s.value("tp_snap_distance") is None:
             s.setValue("tp_snap_distance", 5)
         s.endGroup()
+        s.beginGroup("graphics")
+        if s.value("disable_high_dpi_scaling") is None:
+            s.setValue("disable_high_dpi_scaling", True)
+        s.endGroup()
         s.sync()
-
         # instaload
         self.snap_enabled = s.value("features/tp_snap_enabled", True, bool)
         self.snap_distance = s.value("features/tp_snap_distance", 5, int)
+        self.disable_dpi_scaling = s.value("graphics/disable_high_dpi_scaling", True, bool)
 
     def init(self):
         if not self.load_c3_folder():

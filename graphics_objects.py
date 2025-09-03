@@ -149,7 +149,7 @@ class GraphicsObjectBase(ABC):
             out.append(it)
         return out
 
-    def dotted(self, pts: List[Tuple[float, float]], pen: QPen = None, z=120.0, group=None) -> List[QGraphicsLineItem]:
+    def dotted(self, pts: List[Tuple[float, float]], pen: QPen = None, z=12.0, group=None) -> List[QGraphicsLineItem]:
         if len(pts) < 2:
             return []
         pen = pen or QPen(Qt.black, 1)
@@ -637,7 +637,10 @@ class CityGraphicsObject(GraphicsObjectBase):
 
         # Create the pixmap item
         self.city_item = QGraphicsPixmapItem(self.pixmap)
-        self.city_item.setZValue(10)
+        self.city_item.setTransformationMode(Qt.TransformationMode.FastTransformation)
+        self.pixmap.setDevicePixelRatio(1.0)
+
+        self.city_item.setZValue(250)
         self.city_item.setOffset(0, 0)
         self.city_item.setPos(scene_pt)
         self.city_item.setFlag(QGraphicsPixmapItem.ItemIsSelectable, True)
