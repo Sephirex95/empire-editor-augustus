@@ -34,13 +34,14 @@ QBTN_YES = 1
 QBTN_NO = 2
 QBTN_CANCEL = 0
 
-log = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)-5.5s] : %(message)s",
     handlers=[logging.FileHandler("empire_editor.log"), logging.StreamHandler()],
 )
-log.setLevel(logging.DEBUG)
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)  # full debug for main program
 
 # ---------------------------------------------
 # MainWindow class
