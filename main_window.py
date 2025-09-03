@@ -371,7 +371,8 @@ class MainWindow(QWI.QMainWindow):
         file_path, _ = QWI.QFileDialog.getOpenFileName(self, UIS.OPEN_XML, "", UIS.XML_FILES)
         if not file_path:
             return  # User cancelled
-
+        else:
+            logging.debug(f"Opening empire XML: {file_path}")
         try:
             # Read the XML file
             with open(file_path, "r", encoding="utf-8") as f:
@@ -468,7 +469,7 @@ class MainWindow(QWI.QMainWindow):
         # Ensure .xml
         if not file_path.lower().endswith(".xml"):
             file_path += ".xml"
-
+        log.debug(f"Saving empire XML to: {file_path}")
         # Guarantee the folder exists
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
@@ -484,6 +485,7 @@ class MainWindow(QWI.QMainWindow):
             self.has_unsaved_changes = False
             self.update_window_title()
             self.show_message(UIS.SUCCESS, UIS.EMP_SAVED_MSG.f(file_path=file_path), 0)  # Information, Ok only
+            log.info(f"Empire saved to: {file_path}")
         except Exception as e:
             log.error(e)
             self.show_message(UIS.SAVE_ERROR, UIS.SAVE_ERROR_MSG.f(error=str(e)), 2)  # Critical, Ok only
@@ -612,11 +614,18 @@ class MainWindow(QWI.QMainWindow):
     def update_ui_state(self):
         """Update UI elements based on current empire state."""
         has_empire = self.state and self.state.current_empire_object is not None and self.state.has_any_data()
-
+        log.debug(f"Updating UI state {has_empire=}")
         # Enable/disable Empire Properties action based on whether we have an empire
 
         self.ui.menuEmpireProperties.setEnabled(has_empire)
         self.ui.actionSave.setEnabled(has_empire)
+        log.debug(f"Populating default cities menu")
+        # Repopulate Default Cities menu after loading empire
+        self.default_cities_manager.populate_menu()
+        # Update Default Cities menu state based on current background
+        self.default_cities_manager.update_menu_state()
+        log.debug(f"Populated default cities menu")
+        log.debug(f"Updated UI state")
 
     def _validate_empire_bounds(self, width, height, empire=None, remove_invalid=False):
         """
@@ -847,11 +856,7 @@ class MainWindow(QWI.QMainWindow):
         if Empire and Empire.border:
             self.empire_border = True
             Manager.add_border(Empire.border, self)
-
-        # Repopulate Default Cities menu after loading empire
-        self.default_cities_manager.populate_menu()
-        # Update Default Cities menu state based on current background
-        self.default_cities_manager.update_menu_state()
+        self.update_ui_state()
 
     def _load_and_validate_empire_map(self, empire, xml_dir):
         """Load & validate the empire map.
@@ -1379,6 +1384,7 @@ class MainWindow(QWI.QMainWindow):
         self._set_all_cities_interactive(False)
 
     def deselect_item(self):
+        Manager.deselect_all()  # Deselect via graphics manager too
         self.selected_item = None
         self.selected_list_element = None
         self.is_dragging = False
@@ -2253,6 +2259,7 @@ class MainWindow(QWI.QMainWindow):
             pixmap = None
             image_path = None
             error = "Unsupported or empty image"
+            log.debug(f"Setting background image: {open_dialog=}, Has PIL image:{(pil_img is not None)}")
             while True:
                 if open_dialog:  # Path A: user chooses an image from disk
                     if not self._check_before_discarding("Background Image"):
@@ -2260,14 +2267,19 @@ class MainWindow(QWI.QMainWindow):
                     file_path, _ = QWI.QFileDialog.getOpenFileName(self, "Select Background Image", "", UIS.IMAGE_FILES)
                     if not file_path:
                         return False  # user cancelled
-
+                    else:
+                        log.debug(f"User selected background image: {file_path}")
                     temp_pm = QGU.QPixmap(file_path)
                     if temp_pm.isNull():
                         self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.f(file_path, error), 2)
                         return False
+                    else:
+                        log.debug(f"Loaded background image with size: {temp_pm.size()}")
                     if not skip_validation:
+                        log.debug("Validating existing elements against new background size")
                         if not confirm_elements_fit(temp_pm):
-                            return False  # user said "No"
+                            log.debug("OOB elements detected; user chose not to proceed")
+                            return False  # user chose not to proceed after seeing OOB warning
 
                     pixmap = temp_pm
                     image_path = file_path
@@ -2280,9 +2292,13 @@ class MainWindow(QWI.QMainWindow):
                 if temp_pm.isNull():
                     self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.f(file_path, error), 2)
                     return False
+                else:
+                    log.debug(f"Loaded background image with size: {temp_pm.size()}")
                 if not skip_validation:
+                    log.debug("Validating existing elements against new background size")
                     if not confirm_elements_fit(temp_pm):
-                        return False
+                        log.debug("OOB elements detected; user chose not to proceed")
+                        return False  # user chose not to proceed after seeing OOB warning
 
                 pixmap = temp_pm
                 break
@@ -2374,7 +2390,7 @@ class MainWindow(QWI.QMainWindow):
     def on_new_empire(self):
         """Handle the New Empire action by showing the image selection dialog."""
         # Check if we have unsaved changes
-        if not self._check_before_discarding("new"):
+        if not self._check_before_discarding("New Empire"):
             return
 
         dialog = UIE.ImageSelectionDialog(self)
@@ -2410,8 +2426,9 @@ class MainWindow(QWI.QMainWindow):
     def clear_empire_data(self):
         """Clear all current empire data for a new empire."""
         # Clear the empire data
+        log.debug("Clearing empire data and reseting scene.")
         if self.state.current_empire_object:
-            self.state.current_empire_object = None
+            self.state.clear_empire()
             self._update_empire_reference()  # Update global reference
 
         # Clear scene state and graphics
@@ -2420,7 +2437,7 @@ class MainWindow(QWI.QMainWindow):
         # Clear the list widget and re-add template icons
         self.ui.listWidget.clear()
         self.add_city_icons_to_list()  # Re-add the template icons
-
+        log.debug("Cleared empire data and reset scene.")
         # Update UI state after clearing empire
         self.update_ui_state()
 
