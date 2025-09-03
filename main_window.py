@@ -1936,13 +1936,9 @@ class MainWindow(QWI.QMainWindow):
         # Delegate to graphics object if available
         if hasattr(self, "editing_graphics_object") and self.editing_graphics_object:
             self.editing_graphics_object.cancel_vertex_editing(self.editing_vertex_index)
-
-        # Restore original handle color
-        if self.editing_vertex_handle:
-            self.editing_vertex_handle.setBrush(QGU.QBrush(QCO.Qt.blue))
-
         # Reset editing state
         self._reset_vertex_editing_state()
+        Manager.deselect_all()
 
     def _reset_vertex_editing_state(self):
         """Reset vertex editing state."""
