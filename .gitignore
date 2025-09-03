@@ -85,3 +85,4 @@ CMakeLists.txt.user*
 empire_editor.cfg
 /.spyproject
 empire_editor.log
+/.vscode
