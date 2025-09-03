@@ -9,10 +9,24 @@ organized as a flat enum structure for easy reference and modification.
 """
 
 from enum import Enum
+import string
 
 
 class UIS(str, Enum):
     """All UI strings in a flat structure for easy access."""
+
+    def f(self, *args, **kwargs):
+        """Format string with positional and keyword arguments."""
+        try:
+            # Extract field names from format string
+            names = [fn for _, fn, _, _ in string.Formatter().parse(self.value) if fn]
+            # Map positional args onto field names if no kwargs given
+            for name, arg in zip(names, args):
+                kwargs.setdefault(name, arg)
+            return self.value.format(**kwargs)
+        except Exception as e:
+            # Fallback to original string on error
+            return self.value
 
     # Dialog Titles
     UNSAVED_CHANGES = "Unsaved Changes"
@@ -55,7 +69,7 @@ class UIS(str, Enum):
     LEGACY_EMP_MSG = "This is a version 1 empire file. Loading default empire background."
     NO_MAP_MSG = "Empire file doesn't specify a map. Loading default empire background."
     NO_IMAGE_MSG = "Empire map doesn't specify an image file. Loading default empire background."
-    NO_IMG_SEL_MSG = "No image selected. Loading default empire background."
+    NO_IMG_SEL_MSG = "No image selected. File not loaded."
 
     # File operations
     EMP_LOADED = "Empire loaded from {file_path}"

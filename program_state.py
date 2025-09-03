@@ -364,6 +364,10 @@ class ProgramState:
     def check_if_empire(self):
         return self.current_empire_object is not None
 
+    def clear_empire(self):
+        """Clear current empire from state (but do not create a new one)."""
+        self.current_empire_object = None
+
     def new_empire(self):
         """Create a completely new, clean empire."""
         # Always start with a clean version 1 empire (no map_info)

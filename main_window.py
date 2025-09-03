@@ -386,6 +386,7 @@ class MainWindow(QWI.QMainWindow):
             xml_dir = os.path.dirname(file_path)
             success = self._load_and_validate_empire_map(empire_obj, xml_dir)
             if not success:
+                self.state.clear_empire()
                 return  # User cancelled map loading
 
             # Clear existing visuals and render loaded empire
@@ -399,14 +400,14 @@ class MainWindow(QWI.QMainWindow):
             self.has_unsaved_changes = False
             self.update_window_title()
 
-            self.show_message(UIS.INFO, UIS.EMP_LOADED.format(file_path=file_path), 0)  # Information, Ok only
+            self.show_message(UIS.INFO, UIS.EMP_LOADED.f(file_path=file_path), 0)  # Information, Ok only
 
         except FileNotFoundError:
             log.error(f"File not found: {file_path}")
-            self.show_message(UIS.ERROR, UIS.FILE_NOT_FOUND.format(file_path=file_path), 2)  # Critical, Ok only
+            self.show_message(UIS.ERROR, UIS.FILE_NOT_FOUND.f(file_path=file_path), 2)  # Critical, Ok only
         except Exception as e:
             log.error(e)
-            self.show_message(UIS.ERROR, UIS.LOAD_ERROR.format(error=str(e)), 2)  # Critical, Ok only
+            self.show_message(UIS.ERROR, UIS.LOAD_ERROR.f(error=str(e)), 2)  # Critical, Ok only
         finally:
             self.update_ui_state()
 
@@ -482,10 +483,10 @@ class MainWindow(QWI.QMainWindow):
             self.current_file_path = file_path
             self.has_unsaved_changes = False
             self.update_window_title()
-            self.show_message(UIS.SUCCESS, UIS.EMP_SAVED_MSG.format(file_path=file_path), 0)  # Information, Ok only
+            self.show_message(UIS.SUCCESS, UIS.EMP_SAVED_MSG.f(file_path=file_path), 0)  # Information, Ok only
         except Exception as e:
             log.error(e)
-            self.show_message(UIS.SAVE_ERROR, UIS.SAVE_ERROR_MSG.format(error=str(e)), 2)  # Critical, Ok only
+            self.show_message(UIS.SAVE_ERROR, UIS.SAVE_ERROR_MSG.f(error=str(e)), 2)  # Critical, Ok only
 
     def remove_city(self, city):
         """Remove a city from the empire and scene."""
@@ -881,7 +882,7 @@ class MainWindow(QWI.QMainWindow):
                 # Try to resolve path, otherwise prompt user
                 found_path = self._find_map_image(image_path, xml_dir)
                 if not found_path:
-                    self.show_message(UIS.IMG_NOT_FOUND, UIS.IMG_NOT_FOUND_PROMPT.format(image_path), 0)
+                    self.show_message(UIS.IMG_NOT_FOUND, UIS.IMG_NOT_FOUND_PROMPT.f(image_path), 0)
                     found_path, _ = QWI.QFileDialog.getOpenFileName(
                         self, f"Locate Map Image: {os.path.basename(image_path)}", xml_dir, UIS.IMAGE_FILES
                     )
@@ -906,13 +907,13 @@ class MainWindow(QWI.QMainWindow):
                 except Exception as e:
                     log.error(e)
                     self.show_message(
-                        UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.format(found_image_path=found_path, error=str(e)), 2
+                        UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.f(found_image_path=found_path, error=str(e)), 2
                     )
                     return use_default(UIS.NO_IMAGE, UIS.NO_IMAGE_MSG)
 
         except Exception as e:
             log.error(e)
-            self.show_message(UIS.MAP_LOAD_ERR, UIS.MAP_LOAD_FAIL.format(error=str(e)), 2)
+            self.show_message(UIS.MAP_LOAD_ERR, UIS.MAP_LOAD_FAIL.f(error=str(e)), 2)
             return use_default(UIS.NO_IMAGE, UIS.NO_IMAGE_MSG)
 
     def _find_map_image(self, image_path, xml_dir):
@@ -985,7 +986,7 @@ class MainWindow(QWI.QMainWindow):
         else:
             city_index = self._get_city_index(city)
         if city and city.trade_route and city.trade_route.trade_points:
-            if self.show_message(UIS.DEL_TR, UIS.DEL_TR_CONFIRM.format(city_name=city.name), 3, 1, 2) == QBTN_YES:
+            if self.show_message(UIS.DEL_TR, UIS.DEL_TR_CONFIRM.f(city_name=city.name), 3, 1, 2) == QBTN_YES:
                 # Clear selection if this was the selected route
                 Manager.deselect_all()
                 # Clear only the plotted path, keep the trade route object
@@ -2245,7 +2246,7 @@ class MainWindow(QWI.QMainWindow):
                 if not oob:
                     return True
                 items_text = "\n".join(f"• {item}" for item in oob)
-                message = UIS.ELEMENTS_OOB_MSG.format(elements=items_text)
+                message = UIS.ELEMENTS_OOB_MSG.f(elements=items_text)
                 resp = self.show_message(UIS.ELEMENTS_OOB, message, 3, 1, 2)  # Question, Yes|No, default No
                 return resp == QBTN_YES
 
@@ -2262,7 +2263,7 @@ class MainWindow(QWI.QMainWindow):
 
                     temp_pm = QGU.QPixmap(file_path)
                     if temp_pm.isNull():
-                        self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.format(file_path, error), 2)
+                        self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.f(file_path, error), 2)
                         return False
                     if not skip_validation:
                         if not confirm_elements_fit(temp_pm):
@@ -2277,7 +2278,7 @@ class MainWindow(QWI.QMainWindow):
                     return False  # nothing to do
                 temp_pm = self.pil_to_qpixmap(pil_img)
                 if temp_pm.isNull():
-                    self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.format(file_path, error), 2)
+                    self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.f(file_path, error), 2)
                     return False
                 if not skip_validation:
                     if not confirm_elements_fit(temp_pm):
@@ -2333,7 +2334,7 @@ class MainWindow(QWI.QMainWindow):
             return True
 
         except Exception as e:
-            self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.format(image_path, error=str(e)), 2)
+            self.show_message(UIS.IMG_LOAD_ERR, UIS.IMG_LOAD_FAIL.f(image_path, error=str(e)), 2)
             log.error(e)
             return False
 
@@ -2352,7 +2353,7 @@ class MainWindow(QWI.QMainWindow):
         """Set up background for new empire, handling scene and pixmap creation."""
         pixmap = QGU.QPixmap(selected_image)
         if pixmap.isNull():
-            self.show_message(UIS.INVALID_IMG, UIS.INVALID_IMG_MSG.format(selected_image=selected_image), 1)
+            self.show_message(UIS.INVALID_IMG, UIS.INVALID_IMG_MSG.f(selected_image=selected_image), 1)
             return None
 
         # Store image info
@@ -2513,7 +2514,7 @@ class MainWindow(QWI.QMainWindow):
         if ctype == ed.CityType.OURS:  # OUR city: single instance with move-confirmation
             has_ours, ours = self.state.has_our_city()
             if has_ours:
-                message = UIS.MOVE_OUR_CITY_MSG.format(old_x=ours.x, old_y=ours.y, new_x=x, new_y=y)
+                message = UIS.MOVE_OUR_CITY_MSG.f(old_x=ours.x, old_y=ours.y, new_x=x, new_y=y)
                 resp = self.show_message(UIS.MOVE_OUR_CITY, message, 3, 1, 2)  # Question, Yes|No, default No
                 if resp == QBTN_NO:
                     return
@@ -2831,7 +2832,7 @@ class MainWindow(QWI.QMainWindow):
         self.default_cities_manager.populate_menu()
         if moved > 0:
             self.has_unsaved_changes = True
-            self.show_message(UIS.TR_ALIGNED, UIS.TR_ALIGNED_MSG.format(moved=moved), 0)
+            self.show_message(UIS.TR_ALIGNED, UIS.TR_ALIGNED_MSG.f(moved=moved), 0)
         log.debug("Map refresh completed")
 
 
