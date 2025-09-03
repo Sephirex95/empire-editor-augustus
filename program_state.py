@@ -80,7 +80,7 @@ class ProgramState:
         self.augustus_user_path = s.value("augustus_user_folder", "", str)
         self.snap_enabled = s.value("features/tp_snap_enabled", False, bool)
         self.snap_distance = s.value("features/tp_snap_distance", 0, int)
-
+        self.disable_dpi_scaling = s.value("graphics/disable_high_dpi_scaling", True, bool)
         # derive convenience paths
         if self.augustus_user_path:
             self.augustus_community_image_path = os.path.join(self.augustus_user_path, "community", "image")

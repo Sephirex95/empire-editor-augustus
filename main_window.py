@@ -45,7 +45,7 @@ log.setLevel(logging.DEBUG)  # full debug for main program
 
 # Load settings before creating QApplication
 s = QCO.QSettings("empire_editor.cfg", QCO.QSettings.IniFormat)
-if s.value("features/disable_high_dpi_scaling", True, bool):
+if s.value("graphics/disable_high_dpi_scaling", True, bool):
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
     os.environ["QT_SCALE_FACTOR"] = "1"
@@ -176,7 +176,7 @@ class MainWindow(QWI.QMainWindow):
 
         # Empire menu
         self.ui.actionEmpireProperties.triggered.connect(self.on_empire_properties)
-        self.ui.actionEmpireSnap.triggered.connect(lambda: self.align_trade_points(self.state.snap_distance))
+        self.ui.actionEmpireSnap.triggered.connect(lambda: self.refresh_map(True))
 
         # View menu
         self.ui.actionViewOption1.toggled.connect(self.toggle_cities_visibility)
@@ -2769,12 +2769,9 @@ class MainWindow(QWI.QMainWindow):
                     p.x = px
                     p.y = py
                     moved += 1
-        if moved > 0:
-            self.has_unsaved_changes = True
-            self.show_message(UIS.TR_ALIGNED, UIS.TR_ALIGNED_MSG.format(moved=moved), 0)
         return moved
 
-    def refresh_map(self, snap=True):
+    def refresh_map(self, snap=False):
         """Refresh and re-render all map elements (F5)."""
         log.debug("Refreshing map...")
 
@@ -2790,8 +2787,8 @@ class MainWindow(QWI.QMainWindow):
                 if item != self.bg_item:
                     self.scene.removeItem(item)
 
-        if self.state.snap_enabled and snap:
-            self.align_trade_points(self.state.snap_distance)
+        if self.state.snap_enabled or snap:
+            moved = self.align_trade_points(self.state.snap_distance)
 
         # Clear internal state
         self.city_items.clear()
@@ -2822,6 +2819,9 @@ class MainWindow(QWI.QMainWindow):
 
         # 4. Repopulate Default Cities menu
         self.default_cities_manager.populate_menu()
+        if moved > 0:
+            self.has_unsaved_changes = True
+            self.show_message(UIS.TR_ALIGNED, UIS.TR_ALIGNED_MSG.format(moved=moved), 0)
         log.debug("Map refresh completed")
 
 

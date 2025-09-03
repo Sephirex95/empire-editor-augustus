@@ -52,7 +52,7 @@ class SettingsDialog(QDialog):
     INT_ENABLED_KEY = "features/tp_snap_enabled"
     INT_VALUE_KEY = "features/tp_snap_distance"
 
-    DPI_DISABLE_KEY = "features/disable_high_dpi_scaling"
+    DPI_DISABLE_KEY = "graphics/disable_high_dpi_scaling"
 
     def __init__(self, parent: QWidget | None = None, settings: QSettings | None = None):
         super().__init__(parent)
