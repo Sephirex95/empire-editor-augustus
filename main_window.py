@@ -18,6 +18,8 @@ from html import escape as esc
 from ui_strings import UIS
 import default_cities as DC
 import logging
+from logging.handlers import RotatingFileHandler
+
 
 # ---------------------------------------------
 # Global references to frequently accessed objects
@@ -33,15 +35,31 @@ QBTN_OK = 1
 QBTN_YES = 1
 QBTN_NO = 2
 QBTN_CANCEL = 0
-
+# ---------------------------------------------
+# Logging, exceptions and handlers setup
+# ---------------------------------------------
+file_handler = RotatingFileHandler(
+    "empire_editor.log",
+    mode="a",  # append, then rotate
+    maxBytes=2_000_000,  # about 2 MB ~ 10k log lines
+    backupCount=1,  # keep only the latest file
+    encoding="utf-8",
+)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)-5.5s] : %(message)s",
-    handlers=[logging.FileHandler("empire_editor.log"), logging.StreamHandler()],
+    handlers=[file_handler, logging.StreamHandler()],
 )
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)  # full debug for main program
+
+
+def _excepthook(exc_type, exc, tb):
+    logging.getLogger(__name__).exception("Uncaught exception", exc_info=(exc_type, exc, tb))
+
+
+sys.excepthook = _excepthook
 
 # Load settings before creating QApplication
 s = QCO.QSettings("empire_editor.cfg", QCO.QSettings.IniFormat)
@@ -319,7 +337,11 @@ class MainWindow(QWI.QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.center_no_background_message()  # now harmless if item was deleted
+        if self.no_bg_item is not None:
+            try:
+                self.center_no_background_message()  # now harmless if item was deleted
+            except Exception:
+                pass
 
     def _init_cursor_pixmaps(self):
         """Initialize cursor pixmaps once at startup for drawing modes."""
@@ -2210,17 +2232,21 @@ class MainWindow(QWI.QMainWindow):
             except Exception as e:
                 log.error(f"Failed to remove no-background message item: {e}")
         self.no_bg_item = None  # clear stale reference
+        log.debug(f"Removed no-background message {self.no_bg_item=}")
         self.ui.mouse_position_label.setVisible(True)
 
     def center_no_background_message(self):
-        if self.no_bg_item is None:
-            return
-        view = self.ui.graphicsView
-        vp = view.viewport()
-        br = self.no_bg_item.boundingRect()
-        x = (vp.width() - br.width()) / 2
-        y = (vp.height() - br.height()) / 2
-        self.no_bg_item.setPos(view.mapToScene(int(x), int(y)))
+        try:
+            if self.no_bg_item is None:
+                return
+            view = self.ui.graphicsView
+            vp = view.viewport()
+            br = self.no_bg_item.boundingRect()
+            x = (vp.width() - br.width()) / 2
+            y = (vp.height() - br.height()) / 2
+            self.no_bg_item.setPos(view.mapToScene(int(x), int(y)))
+        except Exception as e:
+            log.error(f"Failed to center no-background message: {e}")
 
     # %% Other
 
@@ -2367,41 +2393,35 @@ class MainWindow(QWI.QMainWindow):
 
     def _setup_new_empire_background(self, selected_image, selected_type):
         """Set up background for new empire, handling scene and pixmap creation."""
-        pixmap = QGU.QPixmap(selected_image)
-        if pixmap.isNull():
+        # Store the background type before calling set_background_image
+        self.bg_type = selected_type
+        try:
+            pil_image = Image.open(selected_image)  # Load the PIL image from the file path
+            pil_image.filename = selected_image  # this shouldnt be required - pil should do it automatically
+            # Use the existing set_background_image functionality
+            success = self.set_background_image(pil_img=pil_image, open_dialog=False, skip_validation=True)
+            if success:
+                self._current_image_path = selected_image  # Store the file path for custom images
+                return self.state.selected_empire_image
+            else:
+                return None
+
+        except Exception as e:
             self.show_message(UIS.INVALID_IMG, UIS.INVALID_IMG_MSG.f(selected_image=selected_image), 1)
             return None
-
-        # Store image info
-        self._current_image_path = selected_image
-        self.state.selected_empire_image = pixmap
-
-        # Set up scene
-        self.scene.clear()
-        self._clear_scene_state()
-        self.bg_item = QWI.QGraphicsPixmapItem(pixmap)
-        self.bg_type = selected_type
-        self.bg_item.setZValue(-1000)
-        self.scene.addItem(self.bg_item)
-        self.scene.setSceneRect(pixmap.rect())
-        self.ui.graphicsView.setEnabled(True)
-        return pixmap
 
     def on_new_empire(self):
         """Handle the New Empire action by showing the image selection dialog."""
         # Check if we have unsaved changes
         if not self._check_before_discarding("New Empire"):
             return
-
         dialog = UIE.ImageSelectionDialog(self)
         if dialog.exec() != QWI.QDialog.Accepted:
             return
-
         selected_image = dialog.get_selected_image()
         selected_type = dialog.get_selected_image_type()
         if not selected_image:
             return
-
         # Set up background and validate image
         pixmap = self._setup_new_empire_background(selected_image, selected_type)
         if pixmap is None:

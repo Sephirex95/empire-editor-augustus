@@ -359,6 +359,9 @@ class ProgramState:
         b = e.border
         if b and b.edges:
             return True
+        if e.map_info:
+            if e.map_info.image != "" or e.map_info.width != 0 or e.map_info.height != 0:
+                return True
         return False
 
     def check_if_empire(self):
