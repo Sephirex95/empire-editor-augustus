@@ -301,7 +301,7 @@ class Empire:
         editor_version: float | None = None,
     ):
         self.version = int(version)
-        self.editor_version: float = float(editor_version) if editor_version is not None else get_editor_version()
+        self.editor_version: float = get_editor_version()
 
         self.ornaments = list(ornaments) if ornaments else []
         self.border = border
