@@ -224,7 +224,43 @@ class MainWindow(QWI.QMainWindow):
         self.default_cities_manager.update_menu_state()
         self.update_window_title()
 
-    # %% Message box helper method
+    # %% QT-RELATED FUNCTIONS AND OVERRIDES
+    def eventFilter(self, obj, event):
+        et = event.type()
+
+        # 1) Always ignore modal dialogs
+        if QWI.QApplication.activeModalWidget() or QWI.QApplication.activePopupWidget():
+            return False
+
+        # 2) Dispatch by event type
+        if et == QCO.QEvent.Type.MouseMove:
+            return self._handle_mouse_move(event)
+
+        elif et in (QCO.QEvent.Type.MouseButtonPress, QCO.QEvent.Type.MouseButtonRelease):
+            return self._handle_mouse_click(event)
+
+        elif et == QCO.QEvent.Type.KeyPress:
+            return self._handle_key_press(event)
+
+        return QCO.QObject.eventFilter(self, obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.no_bg_item is not None:
+            try:
+                self.center_no_background_message()  # now harmless if item was deleted
+            except Exception:
+                pass
+
+    def closeEvent(self, event):
+        """Handle window close event to prevent unsaved data loss."""
+
+        if self._check_before_discarding("Close Application"):
+            event.accept()
+        else:
+            event.ignore()
+
+    # %%% Message box helper method
     def show_message(self, title: str, message: str, msg_type: int = 0, buttons: int = 0, default_button: int = 0):
         """
         Unified message box function to replace all QMessageBox calls.
@@ -322,50 +358,43 @@ class MainWindow(QWI.QMainWindow):
             self.state.apply_settings_from_store()
             # react to changes if needed (e.g., reload images if c3_main_folder changed)
 
+    def _draw_trade_route_from_context(self, city_obj):
+        """Start drawing a trade route from a city via context menu."""
+        if city_obj.trade_route and len(city_obj.trade_route.trade_points) > 0:
+            if self.show_message(UIS.TR_EXISTS, UIS.TR_EXISTS_MSG, 1, 1, 2) != QBTN_YES:
+                return
+            else:
+                # Clear both model and visuals for this specific city
+                city_index = self._get_city_index(city_obj)
+                if city_index is not None:
+                    Manager.remove_trade_route(city_obj)
+                city_obj.trade_route.trade_points = []
+            self.start_trade_route(city_obj)
+        return
+
+    # %% wrappers and private calls
+    def _set_all_cities_interactive(self, enable: bool):
+        """Set interactivity for all city items through graphics manager."""
+        for city_obj in Manager.city_objects.values():
+            city_obj.update_interactivity(enable)
+
+    def _get_city_by_index(self, index: int):
+        """Get city by index from current empire's cities list."""
+        if not Empire or index < 0 or index >= len(Empire.cities):
+            return None
+        return Empire.cities[index]
+
     # %% setup-related functions
     def _update_global_references(self):
         """Update global references to frequently accessed objects."""
         global Empire, Manager
         Manager = self.graphics_manager
-        # Empire is updated separately when it changes
-        self._update_empire_reference()
+        self._update_empire_reference()  # Empire is updated separately when it changes
 
     def _update_empire_reference(self):
         """Update global Empire reference."""
         global Empire
         Empire = self.state.current_empire_object if self.state else None
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.no_bg_item is not None:
-            try:
-                self.center_no_background_message()  # now harmless if item was deleted
-            except Exception:
-                pass
-
-    def _init_cursor_pixmaps(self):
-        """Initialize cursor pixmaps once at startup for drawing modes."""
-        # Edge drawing cursor - use empire edge icon
-        edge_pm = self._get_empire_edge_pixmap()
-        if edge_pm.isNull():
-            # Fallback: create a simple red square
-            edge_pm = QGU.QPixmap(8, 8)
-            edge_pm.fill(QCO.Qt.red)
-        self.edge_cursor_pixmap = edge_pm
-
-        # Trade drawing cursors - use trade dot icons
-        land_pm = self._get_trade_dot_pixmap(True)
-        if land_pm.isNull():
-            # Fallback: create a simple orange dot
-            land_pm = QGU.QPixmap(8, 8)
-            land_pm.fill(QGU.QColor(255, 140, 0))
-        self.land_cursor_pixmap = land_pm
-
-        sea_pm = self._get_trade_dot_pixmap(False)
-        if sea_pm.isNull():
-            sea_pm = QGU.QPixmap(8, 8)
-            sea_pm.fill(QCO.Qt.cyan)
-        self.sea_cursor_pixmap = sea_pm
 
     def _check_before_discarding(self, title=UIS.UNSAVED_CHANGES):
         """Check for unsaved changes before discarding current work."""
@@ -376,13 +405,26 @@ class MainWindow(QWI.QMainWindow):
         message = UIS.UNSAVED_PROGRESS
         return self.show_message(title, message, 3, 1, 2) == QBTN_YES  # Question, Yes|No, default No
 
-    def closeEvent(self, event):
-        """Handle window close event to prevent unsaved data loss."""
+    def mark_unsaved_changes(self):
+        """Mark that the empire has unsaved changes and update the title."""
+        if not self.has_unsaved_changes:
+            self.has_unsaved_changes = True
+            self.update_window_title()
 
-        if self._check_before_discarding("Close Application"):
-            event.accept()
+    def update_window_title(self):
+        """Update the window title to show current file and unsaved changes status."""
+        base_title = f"Empire Editor v{self.program_editor_version}"
+
+        if self.current_file_path:
+            filename = os.path.basename(self.current_file_path)
+            title = f"{filename} - {base_title}"
         else:
-            event.ignore()
+            title = f"New Empire - {base_title}"
+
+        if self.has_unsaved_changes:
+            title = f"*{title}"
+
+        self.setWindowTitle(title)
 
     # %% Main user-facing functions
     def open_empire_xml(self):
@@ -545,25 +587,6 @@ class MainWindow(QWI.QMainWindow):
         self.set_drawing_cursor(True, pm)
         QCO.QTimer.singleShot(0, lambda: self.set_drawing_cursor(True, pm))
 
-    def _set_all_cities_interactive(self, enable: bool):
-        """Set interactivity for all city items through graphics manager."""
-        for city_obj in Manager.city_objects.values():
-            city_obj.update_interactivity(enable)
-
-    def draw_trade_route_from_context(self, city_obj):
-        """Start drawing a trade route from a city via context menu."""
-        if city_obj.trade_route and len(city_obj.trade_route.trade_points) > 0:
-            if self.show_message(UIS.TR_EXISTS, UIS.TR_EXISTS_MSG, 1, 1, 2) != QBTN_YES:
-                return
-            else:
-                # Clear both model and visuals for this specific city
-                city_index = self._get_city_index(city_obj)
-                if city_index is not None:
-                    Manager.remove_trade_route(city_obj)
-                city_obj.trade_route.trade_points = []
-            self.start_trade_route(city_obj)
-        return
-
     def edit_city(self, city_obj):
         snapshot = copy.deepcopy(city_obj)
         dlg = emp_dlg.CityPropertiesDialog(city_obj, self)
@@ -632,7 +655,197 @@ class MainWindow(QWI.QMainWindow):
                 it.setData(QCO.Qt.ItemDataRole.UserRole, city_obj.city_type)
         self.refresh_map()
 
+    def on_empire_properties(self):
+        """Handle the Empire Properties action by showing the properties dialog."""
+        dialog = UIE.EmpirePropertiesDialog(self)
+        dialog.set_border_spacing(Empire.border.density)
+        dialog.set_show_ireland(Empire.show_ireland)
+        # Load ornaments setting (check if ornaments list is not empty)
+        ornaments_enabled = bool(hasattr(Empire, "ornaments") and Empire.ornaments and len(Empire.ornaments) > 0)
+        dialog.set_ornaments_enabled(ornaments_enabled)
+
+        if dialog.exec() == QWI.QDialog.Accepted:
+            # Get the values from the dialog
+            border_spacing = dialog.get_border_spacing()
+            show_ireland = dialog.get_show_ireland()
+            ornaments_enabled = dialog.get_ornaments_enabled()
+
+            # Ensure empire has a border object for border spacing
+            if Empire.border is None:  # Create a new Border object
+                Empire.border = ed.Border(density=border_spacing)
+            else:  # Update existing border object
+                Empire.border.density = border_spacing
+            Empire.show_ireland = show_ireland
+
+            if ornaments_enabled:  # If ornaments is empty and we're enabling, add a placeholder
+                if not Empire.ornaments:
+                    Empire.ornaments = [1]  # Add a default ornament value
+            else:  # Clear ornaments if disabled
+                Empire.ornaments = []
+            # Update UI to reflect changes if needed
+            self.update_ui_state()
+            if Manager.border_object:
+                Manager.border_object.render_border()
+
+    def on_default_empire_map_selected(self):
+        if "The_empire" in self.state.images:
+            empire_image = self.state.images["The_empire"]
+            if isinstance(empire_image, list):
+                empire_image = empire_image[0]
+
+            self.set_background_image(empire_image)
+            self.bg_type = ed.EmpBackgroundTypes.LEGACY
+            self.default_cities_manager.update_menu_state()
+        else:
+            self.show_message(UIS.MISSING_MAP, UIS.MISSING_MAP_MSG, 1)
+
+    def align_trade_points(self, alignment_radius: int) -> int:
+        """
+        Snap nearby trade points (pixel units) to a shared integer coordinate,
+        and remove duplicate points within each city's trade_points list.
+
+        Returns:
+            int: number of points whose coordinates changed or were removed.
+        """
+        if Empire is None:
+            return 0
+
+        moved = 0
+        r2 = alignment_radius * alignment_radius
+
+        for city in Empire.cities:
+            tr = city.trade_route
+            if not (tr and tr.trade_points):
+                continue
+
+            points = tr.trade_points
+            reps: list[tuple[int, int]] = []
+
+            # --- Snap points ---
+            for p in points:
+                px = int(p.x)
+                py = int(p.y)
+
+                snapped = False
+                for rx, ry in reps:
+                    dx = px - rx
+                    dy = py - ry
+                    if dx * dx + dy * dy <= r2:
+                        if p.x != rx or p.y != ry:
+                            p.x = rx
+                            p.y = ry
+                            moved += 1
+                        snapped = True
+                        break
+
+                if not snapped:
+                    reps.append((px, py))
+                    if p.x != px or p.y != py:
+                        p.x = px
+                        p.y = py
+                        moved += 1
+
+            # --- Remove duplicates within this city ---
+            seen: set[tuple[int, int]] = set()
+            unique_points = []
+            for p in points:
+                key = (p.x, p.y)
+                if key not in seen:
+                    seen.add(key)
+                    unique_points.append(p)
+                else:
+                    moved += 1  # count removal
+            tr.trade_points = unique_points
+
+        return moved
+
+    # %% Visibility toggles
+    def toggle_cities_visibility(self):
+        """Toggle visibility of all city markers using the new graphics system."""
+        if Empire is None:
+            return
+        visible = self.ui.actionViewOption1.isChecked()
+        Manager.set_cities_visibility(visible)
+        log.debug(f"Cities visibility: {'ON' if visible else 'OFF'}")
+
+    def toggle_trade_routes_visibility(self):
+        """Toggle visibility of all trade routes using graphics manager."""
+        if Empire is None:
+            return
+        visible = self.ui.actionViewOption2.isChecked()
+        Manager.set_trade_routes_visibility(visible)
+        log.debug(f"Trade routes visibility: {'ON' if visible else 'OFF'}")
+
+    def toggle_border_visibility(self):
+        """Toggle visibility of empire border."""
+        if Empire is None:
+            return
+        visible = self.ui.actionViewOption3.isChecked()
+        Manager.set_border_visibility(visible)
+
+        if hasattr(self, "edge_temp_line_item") and self.edge_temp_line_item:
+            try:
+                self.edge_temp_line_item.setVisible(visible)
+            except RuntimeError:
+                pass
+        visibility = "ON" if visible else "OFF"
+        log.debug(f"Empire border visibility: {visibility}")
+
     # %% ui and drawing
+
+    def refresh_map(self, snap=False):
+        """Refresh and re-render all map elements (F5)."""
+        log.debug("Refreshing map...")
+
+        if not self.state.check_if_empire():
+            log.debug("No empire to refresh")
+            return
+
+        # Clear all visual elements except background
+        if self.scene and self.bg_item:
+            # Remove all items except background
+
+            for item in list(self.scene.items()):
+                if item != self.bg_item:
+                    self.scene.removeItem(item)
+
+        if self.state.snap_enabled or snap:
+            moved = self.align_trade_points(self.state.snap_distance)
+
+        # Clear internal state
+        self.city_items.clear()
+        self.city_labels.clear()
+        self._clear_scene_state()
+
+        # 1. Re-render cities
+
+        for city in Empire.cities:
+            Manager.add_city(city, main_window=self)
+            # Always create name labels (visibility will be controlled by toggle)
+            self._create_city_label(city)
+
+            # Re-render trade routes
+            if city.trade_route is not None:
+                Manager.add_trade_route(city, self)
+
+        # 2. Re-render empire border if enabled
+        if Empire.border:
+            self.empire_border = True
+            Manager.add_border(Empire.border, self)
+
+        # 3. Update visibility states based on current toggle settings
+        self.update_all_city_labels_from_toggles()
+        self.toggle_cities_visibility()
+        self.toggle_trade_routes_visibility()
+        self.toggle_border_visibility()
+
+        # 4. Repopulate Default Cities menu
+        self.default_cities_manager.populate_menu()
+        if moved > 0:
+            self.has_unsaved_changes = True
+            self.show_message(UIS.TR_ALIGNED, UIS.TR_ALIGNED_MSG.f(moved=moved), 0)
+        log.debug("Map refresh completed")
+
     def update_ui_state(self):
         """Update UI elements based on current empire state."""
         has_empire = self.state and self.state.current_empire_object is not None and self.state.has_any_data()
@@ -641,202 +854,45 @@ class MainWindow(QWI.QMainWindow):
 
         self.ui.menuEmpireProperties.setEnabled(has_empire)
         self.ui.actionSave.setEnabled(has_empire)
-        log.debug(f"Populating default cities menu")
+        log.debug("Populating default cities menu")
         # Repopulate Default Cities menu after loading empire
         self.default_cities_manager.populate_menu()
-        # Update Default Cities menu state based on current background
-        self.default_cities_manager.update_menu_state()
-        log.debug(f"Populated default cities menu")
-        log.debug(f"Updated UI state")
 
-    def _validate_empire_bounds(self, width, height, empire=None, remove_invalid=False):
-        """
-        Validate that empire elements fit within the given dimensions.
+        self.default_cities_manager.update_menu_state()  # Update Default Cities menu state based on current background
+        log.debug("Populated default cities menu")
+        log.debug("Updated UI state")
 
-        Args:
-            width: Map width
-            height: Map height
-            empire: Empire object to validate (defaults to global Empire)
-            remove_invalid: If True, remove invalid elements and return count.
-                           If False, return list of invalid element descriptions.
+    def _clear_scene_state(self):
+        """Clear all scene-related state when scene is cleared or reset using the new graphics system."""
+        # Clear graphics manager
+        Manager.clear_all()
 
-        Returns:
-            If remove_invalid=True: int (count of removed elements)
-            If remove_invalid=False: list[str] (descriptions of invalid elements)
-        """
-        empire = empire or Empire
-        if not empire:
-            return 0 if remove_invalid else []
+        # Clear selection state
+        self.selected_item = None
+        self.selected_edge_index = None
 
-        invalid_elements = []
-        removed_count = 0
+        # Clear city items tracking (items will be removed from scene by scene.clear())
+        try:
+            self.city_items.clear()
+            self.city_labels.clear()
 
-        def is_out_of_bounds(x, y):
-            return not (0 <= x < width and 0 <= y < height)
+        except Exception as e:
+            log.error(f"{e}")
+        # Clear drawing states
+        self.edge_drawing_active = False
+        self.edge_points_img = []
+        self.edge_point_items = []
+        self.edge_line_items = []
+        self.edge_temp_line_item = None
 
-        # Check cities
-        if empire.cities:
-            cities_to_remove = []
-            for city in empire.cities:
-                if is_out_of_bounds(city.x, city.y):
-                    if remove_invalid:
-                        cities_to_remove.append(city)
-                        log.debug(f"Removing city '{city.name}' at ({city.x}, {city.y}) - outside map bounds")
-                    else:
-                        invalid_elements.append(f"City '{city.name}' at ({city.x}, {city.y})")
+        self.trade_drawing_active = False
+        self.trade_drawing_points = []
+        self.trade_drawing_point_items = []
+        self.trade_drawing_line_items = []
+        self.trade_temp_line_item = None
+        self.trade_route_city = None
 
-            if remove_invalid:
-                for city in cities_to_remove:
-                    empire.cities.remove(city)
-                    removed_count += 1
-
-        # Check border edges
-        if empire.border and empire.border.edges:
-            edges_to_remove = []
-            for i, edge in enumerate(empire.border.edges):
-                if is_out_of_bounds(edge.x, edge.y):
-                    if remove_invalid:
-                        edges_to_remove.append(edge)
-                        log.debug(f"Removing border edge at ({edge.x}, {edge.y}) - outside map bounds")
-                    else:
-                        invalid_elements.append(f"Border edge {i + 1} at ({edge.x}, {edge.y})")
-
-            if remove_invalid:
-                for edge in edges_to_remove:
-                    empire.border.edges.remove(edge)
-                    removed_count += 1
-
-        # Check trade route points
-        if empire.cities:
-            for city in empire.cities:
-                if city.trade_route and city.trade_route.trade_points:
-                    points_to_remove = []
-                    for i, point in enumerate(city.trade_route.trade_points):
-                        if is_out_of_bounds(point.x, point.y):
-                            if remove_invalid:
-                                points_to_remove.append(point)
-                                log.debug(f"Removing trade route point at ({point.x}, {point.y}) - outside map bounds")
-                            else:
-                                invalid_elements.append(
-                                    f"Trade route point {i + 1} for '{city.name}' at ({point.x}, {point.y})"
-                                )
-
-                    if remove_invalid:
-                        for point in points_to_remove:
-                            city.trade_route.trade_points.remove(point)
-                            removed_count += 1
-
-        # Check invasion paths (only in remove mode, as this wasn't in the original report function)
-        if remove_invalid and empire.invasion_paths:
-            for invasion_path in empire.invasion_paths:
-                if invasion_path.battles:
-                    battles_to_remove = []
-                    for battle in invasion_path.battles:
-                        if is_out_of_bounds(battle.x, battle.y):
-                            battles_to_remove.append(battle)
-                            log.debug(f"Removing invasion battle at ({battle.x}, {battle.y}) - outside map bounds")
-
-                    for battle in battles_to_remove:
-                        invasion_path.battles.remove(battle)
-                        removed_count += 1
-
-        # Check distant battle paths (only in remove mode, as this wasn't in the original report function)
-        if remove_invalid and empire.distant_battle_paths:
-            for path in empire.distant_battle_paths:
-                if path.battles:
-                    battles_to_remove = []
-                    for battle in path.battles:
-                        if is_out_of_bounds(battle.x, battle.y):
-                            battles_to_remove.append(battle)
-                            log.debug(f"Removing distant battle at ({battle.x}, {battle.y}) - outside map bounds")
-
-                    for battle in battles_to_remove:
-                        path.battles.remove(battle)
-                        removed_count += 1
-
-        return removed_count if remove_invalid else invalid_elements
-
-    def _update_empire_map_info(self, image_path=None, pixmap=None):
-        """Update the current empire's map information with background details."""
-        if not Empire:
-            return
-
-        # Ensure we have a map_info object (upgrade to version 2 if needed)
-        if Empire.version == 1 or Empire.map_info is None:
-            Empire.version = 2
-            Empire.map_info = ed.Map()
-
-        # Update map information
-        if image_path:
-            Empire.map_info.image = image_path
-        if pixmap and not pixmap.isNull():
-            Empire.map_info.width = pixmap.width()
-            Empire.map_info.height = pixmap.height()
-            # Reset offsets for new background
-            Empire.map_info.x_offset = 0
-            Empire.map_info.y_offset = 0
-            Empire.map_info.coordinates_x_offset = 0
-            Empire.map_info.coordinates_y_offset = 0
-
-    def _prepare_empire_map_info_for_save(self, empire, file_path, img_path: str = "", xml_path: str = ""):
-        """Update empire map_info based on current background before saving.
-
-        If img_path is provided, images are written there (e.g., Augustus 'community/image').
-        Otherwise they go to '<xml_dir>/image'.
-        """
-        if not self.bg_item or self.bg_type == ed.EmpBackgroundTypes.LEGACY:
-            # For legacy backgrounds or no background, keep version 1 format
-            empire.version = 1
-            empire.map_info = None
-            return
-
-        empire.version = 2  # For custom backgrounds, set up map_info for version 2+
-
-        pixmap = self.bg_item.pixmap()
-        if pixmap.isNull():
-            empire.map_info = None
-            return
-
-        # Where the XML will live
-        xml_dir = os.path.dirname(file_path)
-        images_dir = img_path if img_path else os.path.join(xml_dir, "image")
-        if not os.path.exists(images_dir):  # Create images directory if it doesn't exist
-            os.makedirs(images_dir, exist_ok=True)
-
-        # Determine the filename of the source image we're currently using
-        if hasattr(self, "_current_image_path") and self._current_image_path:
-            image_filename = os.path.basename(self._current_image_path)
-            source_path = self._current_image_path
-        else:
-            image_filename = "background.png"
-            source_path = None
-
-        # Target path in the chosen images folder
-        target_path = os.path.join(images_dir, image_filename)
-
-        # Copy the image file if we have a source and target doesn't exist
-        if source_path and os.path.exists(source_path) and not os.path.exists(target_path):
-            try:
-                shutil.copy2(source_path, target_path)
-                log.debug(f"Copied background image to: {target_path}")
-            except Exception as e:
-                log.error(f"Warning: Could not copy image file: {e}")
-
-        # Create or update map_info
-        if empire.map_info is None:
-            empire.map_info = ed.Map()
-
-        # Game engine requirement: just the filename
-        empire.map_info.image = image_filename
-        empire.map_info.width = pixmap.width()
-        empire.map_info.height = pixmap.height()
-        empire.map_info.x_offset = 0
-        empire.map_info.y_offset = 0
-        empire.map_info.coordinates_relative = False
-        empire.map_info.coordinates_x_offset = 0
-        empire.map_info.coordinates_y_offset = 0
-
-        log.debug(f"Updated empire map_info: {image_filename} ({pixmap.width()}x{pixmap.height()})")
+        self.vertex_editing_active = False
 
     def _render_loaded_empire(self):
         """Render the loaded empire data onto the scene."""
@@ -943,194 +999,7 @@ class MainWindow(QWI.QMainWindow):
             self.show_message(UIS.MAP_LOAD_ERR, UIS.MAP_LOAD_FAIL.f(error=str(e)), 2)
             return use_default(UIS.NO_IMAGE, UIS.NO_IMAGE_MSG)
 
-    def _find_map_image(self, image_path, xml_dir):
-        """Try to find the map image in various locations relative to the XML file."""
-        filename = os.path.basename(image_path)
-        if os.path.isabs(image_path) and os.path.exists(image_path):
-            return image_path
-
-        # Try relative to XML directory
-        rel_path = os.path.join(xml_dir, image_path)
-        if os.path.exists(rel_path):
-            return rel_path
-
-        if getattr(sys, "frozen", False):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-
-        maps_path = os.path.join(base_path, "augustus_assets", "Areldir_maps", filename)
-        if os.path.exists(maps_path):
-            return maps_path
-        # Try in images subdirectory
-        images_path = os.path.join(xml_dir, "images", image_path)
-        if os.path.exists(images_path):
-            return images_path
-
-        # Try just the filename in XML directory
-
-        filename_path = os.path.join(xml_dir, filename)
-        if os.path.exists(filename_path):
-            return filename_path
-
-        # Try filename in images subdirectory
-        filename_images_path = os.path.join(xml_dir, "images", filename)
-        if os.path.exists(filename_images_path):
-            return filename_images_path
-
-        return None
-
-    def _get_background_type_from_image_path(self, image_path):
-        """Get the EmpBackgroundTypes enum value for a given image path."""
-        if not image_path:
-            return ed.EmpBackgroundTypes.CUSTOM
-
-        filename = os.path.basename(image_path)
-
-        default_map_types = {
-            "Orbis_Terrarum_Empire_Map.png": ed.EmpBackgroundTypes.BIG_MAP,
-            "Occidentalis_Empire_Map.png": ed.EmpBackgroundTypes.NORTH_MAP,
-            "Orientalis_Empire_Map.png": ed.EmpBackgroundTypes.SOUTH_MAP,
-        }
-
-        # Check filename first
-        if filename in default_map_types:
-            return default_map_types[filename]
-
-        # Check if the path contains the characteristic folder structure
-        normalized_path = image_path.replace("\\", "/")
-        for default_filename, bg_type in default_map_types.items():
-            if f"augustus_assets/Areldir_maps/{default_filename}" in normalized_path:
-                return bg_type
-
-        return ed.EmpBackgroundTypes.CUSTOM
-
-    def delete_trade_route_from_item(self, item, city=None):
-        """Delete trade route path from context menu selection."""
-        if city is None:
-            city_index = item.data(QCO.Qt.ItemDataRole.UserRole + 1)
-            city = self._get_city_by_index(city_index)
-        else:
-            city_index = self._get_city_index(city)
-        if city and city.trade_route and city.trade_route.trade_points:
-            if self.show_message(UIS.DEL_TR, UIS.DEL_TR_CONFIRM.f(city_name=city.name), 3, 1, 2) == QBTN_YES:
-                # Clear selection if this was the selected route
-                Manager.deselect_all()
-                # Clear only the plotted path, keep the trade route object
-                city.trade_route.trade_points.clear()
-                self.mark_unsaved_changes()  # Mark as unsaved after deleting trade route
-                Manager.remove_trade_route(city)
-                return True
-        else:
-            try:
-                Manager.remove_trade_route(city)
-            except Exception as ex:
-                log.error(f"Error clearing trade route visuals: {ex}")
-        return False
-
-    def edit_city_from_trade_route_item(self, item):
-        """Edit city from trade route context menu selection."""
-        city_index = item.data(QCO.Qt.ItemDataRole.UserRole + 1)
-        city = self._get_city_by_index(city_index)
-        if city:
-            self.edit_city(city)
-
-    def _trade_route_ends_at_city(self, trade_route, city):
-        """Check if a trade route ends at the specified city (last point within city bounds)."""
-        if not trade_route or not trade_route.trade_points or len(trade_route.trade_points) < 1:
-            return False
-
-        # Get the last trade point
-        last_point = trade_route.trade_points[-1]
-
-        # Get city bounds (coordinates are center-based)
-        city_pixmap = Manager.get_city_pixmap(city.city_type, self)
-        city_half_width = city_pixmap.width() // 2
-        city_half_height = city_pixmap.height() // 2
-
-        # Check if last point is within city icon bounds (center-based)
-        return (
-            city.x - city_half_width <= last_point.x <= city.x + city_half_width
-            and city.y - city_half_height <= last_point.y <= city.y + city_half_height
-        )
-
-    def _get_city_by_index(self, index: int):
-        """Get city by index from current empire's cities list."""
-        if not Empire or index < 0 or index >= len(Empire.cities):
-            return None
-        return Empire.cities[index]
-
-    def set_drawing_cursor(self, enable: bool, pixmap=None):
-        if not enable:
-            QWI.QApplication.restoreOverrideCursor()
-            self._win_cursor_applied = False
-            self._win_cursor_sig = None
-            return
-
-        # Decide pixmap from mode if not provided
-        if pixmap is None:
-            if getattr(self, "edge_drawing_active", False):
-                pixmap = self.edge_cursor_pixmap
-            elif getattr(self, "trade_drawing_active", False):
-                pixmap = self.land_cursor_pixmap if getattr(self, "trade_is_land", False) else self.sea_cursor_pixmap
-
-        # If still none, fall back to default (unset)
-        if pixmap is None:
-            QWI.QApplication.restoreOverrideCursor()
-
-            self._win_cursor_applied = False
-            self._win_cursor_sig = None
-            return
-
-        hsx, hsy = pixmap.width() // 2, pixmap.height() // 2
-        sig = (pixmap.cacheKey(), hsx, hsy)
-
-        if not self._win_cursor_applied or self._win_cursor_sig != sig:
-            QWI.QApplication.setOverrideCursor(QGU.QCursor(pixmap, hsx, hsy))
-
-            self._win_cursor_applied = True
-            self._win_cursor_sig = sig
-
-    def update_window_title(self):
-        """Update the window title to show current file and unsaved changes status."""
-        base_title = f"Empire Editor v{self.program_editor_version}"
-
-        if self.current_file_path:
-            filename = os.path.basename(self.current_file_path)
-            title = f"{filename} - {base_title}"
-        else:
-            title = f"New Empire - {base_title}"
-
-        if self.has_unsaved_changes:
-            title = f"*{title}"
-
-        self.setWindowTitle(title)
-
-    def mark_unsaved_changes(self):
-        """Mark that the empire has unsaved changes and update the title."""
-        if not self.has_unsaved_changes:
-            self.has_unsaved_changes = True
-            self.update_window_title()
-
     # %% GLOBAL EVENT FILTER
-    def eventFilter(self, obj, event):
-        et = event.type()
-
-        # 1) Always ignore modal dialogs
-        if QWI.QApplication.activeModalWidget() or QWI.QApplication.activePopupWidget():
-            return False
-
-        # 2) Dispatch by event type
-        if et == QCO.QEvent.Type.MouseMove:
-            return self._handle_mouse_move(event)
-
-        elif et in (QCO.QEvent.Type.MouseButtonPress, QCO.QEvent.Type.MouseButtonRelease):
-            return self._handle_mouse_click(event)
-
-        elif et == QCO.QEvent.Type.KeyPress:
-            return self._handle_key_press(event)
-
-        return QCO.QObject.eventFilter(self, obj, event)
 
     def _handle_key_press(self, event):
         """Handle keyboard events for vertex editing and other shortcuts."""
@@ -1282,217 +1151,6 @@ class MainWindow(QWI.QMainWindow):
             return True
         return False
 
-    def _handle_normal_click(self, event, gp, inside_view):
-        # --- RIGHT CLICK ---
-        if event.button() == QCO.Qt.MouseButton.RightButton and inside_view:
-            scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
-            items = self.scene.items(scene_pos)
-
-            for it in items:
-                if it.flags() & QWI.QGraphicsItem.ItemIsSelectable:
-                    # Optional: auto-select before showing menu
-                    self._select_scene_item(it)
-                    self._show_context_menu_for_item(it, gp)
-                    return True
-
-            # No selectable item -> clear selection
-            self.deselect_all()
-            return True
-
-        # --- LEFT CLICK ---
-        if event.button() == QCO.Qt.MouseButton.LeftButton and inside_view:
-            scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
-            items = self.scene.items(scene_pos)
-
-            for it in items:
-                if it.flags() & QWI.QGraphicsItem.ItemIsSelectable:
-                    self._select_scene_item(it)
-                    return True
-
-            # Clicked empty spot → clear selection
-            self.deselect_all()
-            return True
-
-        return False
-
-    # %% Input adjacent Functions
-    # %%% Selection handling:
-    def _select_scene_item(self, item):
-        """
-        Handle selecting any selectable object on the scene using the new graphics system.
-        Only one selection can be active at a time.
-        """
-        # Check if this is a vertex handle first
-        if item.data(QCO.Qt.ItemDataRole.UserRole) == "VERTEX_HANDLE":
-            self.start_vertex_editing(item)
-            return
-
-        # Try to find a graphics object for this scene item, including nested objects
-        graphics_obj = Manager.get_graphics_object_for_scene_item(item)
-
-        if graphics_obj:
-            # Check if this is an edge hit item and select the edge
-            edge_index = item.data(QCO.Qt.ItemDataRole.UserRole + 1)
-            if edge_index is not None and hasattr(graphics_obj, "select_edge"):
-                graphics_obj.select_edge(edge_index)
-
-            # Use graphics manager to select
-            Manager.select_object(graphics_obj)
-            self.selected_item = item
-
-            # Handle specific object types
-            if isinstance(graphics_obj, GRO.CityGraphicsObject):
-                return
-            elif isinstance(graphics_obj, GRO.TradeRouteGraphicsObject):
-                # Handle trade route selection - graphics objects now handle overlay
-                Manager.select_object(graphics_obj)
-                return
-            elif isinstance(graphics_obj, GRO.BorderGraphicsObject):
-                # Handle border selection - use graphics manager
-                Manager.select_object(graphics_obj)
-                return
-            elif isinstance(graphics_obj, GRO.EmpireEdgeGraphicsObject):
-                # Handle individual edge selection - use graphics manager
-                Manager.select_object(graphics_obj)
-                return
-        self.deselect_all()
-
-    # ---------- LIST / DRAGGING ----------
-    def _update_mouse_position_label(self, scene_pos):
-        pm_item = self.bg_item
-        if pm_item is not None:
-            img_pos = pm_item.mapFromScene(scene_pos)
-            x, y = int(img_pos.x()), int(img_pos.y())
-            pm = pm_item.pixmap()
-            if 0 <= x < pm.width() and 0 <= y < pm.height():
-                self.ui.mouse_position_label.setText(f"Mouse Position: ({x}, {y})")
-            else:
-                self.ui.mouse_position_label.setText("")
-        return
-
-    def on_item_clicked(self, item):
-        if self.selected_item == item:  # already selected -> deselect
-            self.deselect_item()
-        else:
-            self.select_item(item)  # visually mark it selected in the list
-            self.ui.listWidget.setCurrentItem(item)
-
-    def select_item(self, item):
-        """Select an item from the list widget using the new graphics system."""
-        self.deselect_all()  # clear current selections first
-
-        # Get the selectable element
-        element_index = item.data(QCO.Qt.ItemDataRole.UserRole)
-        if element_index is None or element_index >= len(self.selectable_elements):
-            return
-
-        selectable_element = self.selectable_elements[element_index]
-
-        # Store references to both the list item and the selectable element
-        self.selected_item = item
-        self.selected_list_element = selectable_element  # The selectable element from list
-
-        pixmap = selectable_element.pixmap
-        self.ui.graphicsView.setInteractive(False)
-
-        # cache the exact pixmap used for drag
-        self.drag_pixmap = pixmap
-
-        # Don't create a floating icon - use cursor instead
-        self.is_dragging = True
-        self.set_drawing_cursor(True, pixmap)
-        self.ui.graphicsView.setDragMode(QWI.QGraphicsView.DragMode.NoDrag)
-
-        self._set_all_cities_interactive(False)
-
-    def deselect_item(self):
-        Manager.deselect_all()  # Deselect via graphics manager too
-        self.selected_item = None
-        self.selected_list_element = None
-        self.is_dragging = False
-        self.set_drawing_cursor(False)
-        self.ui.graphicsView.setInteractive(True)
-        self.ui.graphicsView.setDragMode(QWI.QGraphicsView.DragMode.NoDrag)  # not ScrollHandDrag
-        # FIX: also clear the QListWidget’s selection so it’s not visually highlighted
-        self.ui.listWidget.clearSelection()
-        self._set_all_cities_interactive(True)
-
-    # ===================================================================
-    # CORE VISUAL STATE MANAGEMENT
-    # ===================================================================
-
-    def deselect_all(self):
-        """Clear all selection states using the new graphics system."""
-        # Use graphics manager to deselect
-        Manager.deselect_all()
-
-        # Clear other selection states
-        self.clear_vertex_handles()
-        self.selected_item = None
-        self.selected_list_element = None
-        self.selected_edge_index = None
-
-    def _clear_selection_overlay(self, overlay_type):
-        """Generic function to clear selection overlays."""
-        if overlay_type == "trade_route":
-            # Trade route selection now handled by graphics objects
-            pass
-        elif overlay_type == "vertex":
-            # Vertex handles now handled by graphics objects
-            self.vertex_editing_active = False
-
-    def clear_vertex_handles(self):
-        """Remove vertex editing handles."""
-        self._clear_selection_overlay("vertex")
-
-    # ===================================================================
-    # UNIFIED MESSAGE BOXES & UTILITIES
-    # ===================================================================
-
-    def _clear_scene_state(self):
-        """Clear all scene-related state when scene is cleared or reset using the new graphics system."""
-        # Clear graphics manager
-        Manager.clear_all()
-
-        # Clear selection state
-        self.selected_item = None
-        self.selected_edge_index = None
-
-        # Clear city items tracking (items will be removed from scene by scene.clear())
-        try:
-            self.city_items.clear()
-            self.city_labels.clear()
-
-        except Exception as e:
-            log.error(f"{e}")
-        # Clear drawing states
-        self.edge_drawing_active = False
-        self.edge_points_img = []
-        self.edge_point_items = []
-        self.edge_line_items = []
-        self.edge_temp_line_item = None
-
-        self.trade_drawing_active = False
-        self.trade_drawing_points = []
-        self.trade_drawing_point_items = []
-        self.trade_drawing_line_items = []
-        self.trade_temp_line_item = None
-        self.trade_route_city = None
-
-        self.vertex_editing_active = False
-
-    # ===================================================================
-    # CITY & ENTITY MANAGEMENT
-    # ===================================================================
-
-    def clear_empire_border_visual(self):
-        """Clear empire border visuals."""
-        Manager.remove_border()
-
-    # ===================================================================
-    # TRADE ROUTE CLICK HANDLING & DRAWING OPERATIONS
-    # ===================================================================
-
     def _handle_trade_click(self, event, gp, inside_view):
         """Handle mouse clicks during trade route drawing."""
         if event.button() == QCO.Qt.MouseButton.RightButton or not inside_view:
@@ -1539,6 +1197,90 @@ class MainWindow(QWI.QMainWindow):
                     self._trade_undo_last_point()
             return True
         return False
+
+    def _handle_normal_click(self, event, gp, inside_view):
+        # --- RIGHT CLICK ---
+        if event.button() == QCO.Qt.MouseButton.RightButton and inside_view:
+            scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
+            items = self.scene.items(scene_pos)
+
+            for it in items:
+                if it.flags() & QWI.QGraphicsItem.ItemIsSelectable:
+                    # Optional: auto-select before showing menu
+                    self._select_scene_item(it)
+                    self._show_context_menu_for_item(it, gp)
+                    return True
+
+            # No selectable item -> clear selection
+            self.deselect_all()
+            return True
+
+        # --- LEFT CLICK ---
+        if event.button() == QCO.Qt.MouseButton.LeftButton and inside_view:
+            scene_pos = self.ui.graphicsView.mapToScene(self.ui.graphicsView.viewport().mapFromGlobal(gp))
+            items = self.scene.items(scene_pos)
+
+            for it in items:
+                if it.flags() & QWI.QGraphicsItem.ItemIsSelectable:
+                    self._select_scene_item(it)
+                    return True
+
+            # Clicked empty spot → clear selection
+            self.deselect_all()
+            return True
+
+        return False
+
+    # %% Trade routes
+
+    def delete_trade_route_from_item(self, item, city=None):
+        """Delete trade route path from context menu selection."""
+        if city is None:
+            city_index = item.data(QCO.Qt.ItemDataRole.UserRole + 1)
+            city = self._get_city_by_index(city_index)
+        else:
+            city_index = self._get_city_index(city)
+        if city and city.trade_route and city.trade_route.trade_points:
+            if self.show_message(UIS.DEL_TR, UIS.DEL_TR_CONFIRM.f(city_name=city.name), 3, 1, 2) == QBTN_YES:
+                # Clear selection if this was the selected route
+                Manager.deselect_all()
+                # Clear only the plotted path, keep the trade route object
+                city.trade_route.trade_points.clear()
+                self.mark_unsaved_changes()  # Mark as unsaved after deleting trade route
+                Manager.remove_trade_route(city)
+                return True
+        else:
+            try:
+                Manager.remove_trade_route(city)
+            except Exception as ex:
+                log.error(f"Error clearing trade route visuals: {ex}")
+        return False
+
+    def edit_city_from_trade_route_item(self, item):
+        """Edit city from trade route context menu selection."""
+        city_index = item.data(QCO.Qt.ItemDataRole.UserRole + 1)
+        city = self._get_city_by_index(city_index)
+        if city:
+            self.edit_city(city)
+
+    def _trade_route_ends_at_city(self, trade_route, city):
+        """Check if a trade route ends at the specified city (last point within city bounds)."""
+        if not trade_route or not trade_route.trade_points or len(trade_route.trade_points) < 1:
+            return False
+
+        # Get the last trade point
+        last_point = trade_route.trade_points[-1]
+
+        # Get city bounds (coordinates are center-based)
+        city_pixmap = Manager.get_city_pixmap(city.city_type, self)
+        city_half_width = city_pixmap.width() // 2
+        city_half_height = city_pixmap.height() // 2
+
+        # Check if last point is within city icon bounds (center-based)
+        return (
+            city.x - city_half_width <= last_point.x <= city.x + city_half_width
+            and city.y - city_half_height <= last_point.y <= city.y + city_half_height
+        )
 
     def start_trade_route(self, city):
         """Start drawing a trade route for a specific city."""
@@ -1620,7 +1362,261 @@ class MainWindow(QWI.QMainWindow):
         """Abort current trade route drawing session."""
         self._abort_drawing("trade", erase=True)
 
+    # %% Cursor
+    def _init_cursor_pixmaps(self):
+        """Initialize cursor pixmaps once at startup for drawing modes."""
+        # Edge drawing cursor - use empire edge icon
+        edge_pm = self._get_empire_edge_pixmap()
+        if edge_pm.isNull():
+            # Fallback: create a simple red square
+            edge_pm = QGU.QPixmap(8, 8)
+            edge_pm.fill(QCO.Qt.red)
+        self.edge_cursor_pixmap = edge_pm
+
+        # Trade drawing cursors - use trade dot icons
+        land_pm = self._get_trade_dot_pixmap(True)
+        if land_pm.isNull():
+            # Fallback: create a simple orange dot
+            land_pm = QGU.QPixmap(8, 8)
+            land_pm.fill(QGU.QColor(255, 140, 0))
+        self.land_cursor_pixmap = land_pm
+
+        sea_pm = self._get_trade_dot_pixmap(False)
+        if sea_pm.isNull():
+            sea_pm = QGU.QPixmap(8, 8)
+            sea_pm.fill(QCO.Qt.cyan)
+        self.sea_cursor_pixmap = sea_pm
+
+    def set_drawing_cursor(self, enable: bool, pixmap=None):
+        if not enable:
+            QWI.QApplication.restoreOverrideCursor()
+            self._win_cursor_applied = False
+            self._win_cursor_sig = None
+            return
+
+        # Decide pixmap from mode if not provided
+        if pixmap is None:
+            if getattr(self, "edge_drawing_active", False):
+                pixmap = self.edge_cursor_pixmap
+            elif getattr(self, "trade_drawing_active", False):
+                pixmap = self.land_cursor_pixmap if getattr(self, "trade_is_land", False) else self.sea_cursor_pixmap
+
+        # If still none, fall back to default (unset)
+        if pixmap is None:
+            QWI.QApplication.restoreOverrideCursor()
+
+            self._win_cursor_applied = False
+            self._win_cursor_sig = None
+            return
+
+        hsx, hsy = pixmap.width() // 2, pixmap.height() // 2
+        sig = (pixmap.cacheKey(), hsx, hsy)
+
+        if not self._win_cursor_applied or self._win_cursor_sig != sig:
+            QWI.QApplication.setOverrideCursor(QGU.QCursor(pixmap, hsx, hsy))
+
+            self._win_cursor_applied = True
+            self._win_cursor_sig = sig
+
+    def _update_mouse_position_label(self, scene_pos):
+        pm_item = self.bg_item
+        if pm_item is not None:
+            img_pos = pm_item.mapFromScene(scene_pos)
+            x, y = int(img_pos.x()), int(img_pos.y())
+            pm = pm_item.pixmap()
+            if 0 <= x < pm.width() and 0 <= y < pm.height():
+                self.ui.mouse_position_label.setText(f"Mouse Position: ({x}, {y})")
+            else:
+                self.ui.mouse_position_label.setText("")
+        return
+
+    # %% Input adjacent Functions
+    # %%% Selection handling:
+    def _select_scene_item(self, item):
+        """
+        Handle selecting any selectable object on the scene using the new graphics system.
+        Only one selection can be active at a time.
+        """
+        # Check if this is a vertex handle first
+        if item.data(QCO.Qt.ItemDataRole.UserRole) == "VERTEX_HANDLE":
+            self.start_vertex_editing(item)
+            return
+
+        # Try to find a graphics object for this scene item, including nested objects
+        graphics_obj = Manager.get_graphics_object_for_scene_item(item)
+
+        if graphics_obj:
+            # Check if this is an edge hit item and select the edge
+            edge_index = item.data(QCO.Qt.ItemDataRole.UserRole + 1)
+            if edge_index is not None and hasattr(graphics_obj, "select_edge"):
+                graphics_obj.select_edge(edge_index)
+
+            # Use graphics manager to select
+            Manager.select_object(graphics_obj)
+            self.selected_item = item
+
+            # Handle specific object types
+            if isinstance(graphics_obj, GRO.CityGraphicsObject):
+                return
+            elif isinstance(graphics_obj, GRO.TradeRouteGraphicsObject):
+                # Handle trade route selection - graphics objects now handle overlay
+                Manager.select_object(graphics_obj)
+                return
+            elif isinstance(graphics_obj, GRO.BorderGraphicsObject):
+                # Handle border selection - use graphics manager
+                Manager.select_object(graphics_obj)
+                return
+            elif isinstance(graphics_obj, GRO.EmpireEdgeGraphicsObject):
+                # Handle individual edge selection - use graphics manager
+                Manager.select_object(graphics_obj)
+                return
+        self.deselect_all()
+
+    # ---------- LIST / DRAGGING ----------
+
+    def on_item_clicked(self, item):
+        if self.selected_item == item:  # already selected -> deselect
+            self.deselect_item()
+        else:
+            self.select_item(item)  # visually mark it selected in the list
+            self.ui.listWidget.setCurrentItem(item)
+
+    def select_item(self, item):
+        """Select an item from the list widget using the new graphics system."""
+        self.deselect_all()  # clear current selections first
+
+        # Get the selectable element
+        element_index = item.data(QCO.Qt.ItemDataRole.UserRole)
+        if element_index is None or element_index >= len(self.selectable_elements):
+            return
+
+        selectable_element = self.selectable_elements[element_index]
+
+        # Store references to both the list item and the selectable element
+        self.selected_item = item
+        self.selected_list_element = selectable_element  # The selectable element from list
+
+        pixmap = selectable_element.pixmap
+        self.ui.graphicsView.setInteractive(False)
+
+        # cache the exact pixmap used for drag
+        self.drag_pixmap = pixmap
+
+        # Don't create a floating icon - use cursor instead
+        self.is_dragging = True
+        self.set_drawing_cursor(True, pixmap)
+        self.ui.graphicsView.setDragMode(QWI.QGraphicsView.DragMode.NoDrag)
+
+        self._set_all_cities_interactive(False)
+
+    def deselect_item(self):
+        Manager.deselect_all()  # Deselect via graphics manager too
+        self.selected_item = None
+        self.selected_list_element = None
+        self.is_dragging = False
+        self.set_drawing_cursor(False)
+        self.ui.graphicsView.setInteractive(True)
+        self.ui.graphicsView.setDragMode(QWI.QGraphicsView.DragMode.NoDrag)  # not ScrollHandDrag
+        # FIX: also clear the QListWidget’s selection so it’s not visually highlighted
+        self.ui.listWidget.clearSelection()
+        self._set_all_cities_interactive(True)
+
+    # ===================================================================
+    # CORE VISUAL STATE MANAGEMENT
+    # ===================================================================
+
+    def deselect_all(self):
+        """Clear all selection states using the new graphics system."""
+        # Use graphics manager to deselect
+        Manager.deselect_all()
+
+        # Clear other selection states
+        self.clear_vertex_handles()
+        self.selected_item = None
+        self.selected_list_element = None
+        self.selected_edge_index = None
+
+    def _clear_selection_overlay(self, overlay_type):
+        """Generic function to clear selection overlays."""
+        if overlay_type == "trade_route":
+            # Trade route selection now handled by graphics objects
+            pass
+        elif overlay_type == "vertex":
+            # Vertex handles now handled by graphics objects
+            self.vertex_editing_active = False
+
+    # ===================================================================
+    # CITY & ENTITY MANAGEMENT
+    # ===================================================================
+
+    def clear_empire_border_visual(self):
+        """Clear empire border visuals."""
+        Manager.remove_border()
+
+    # ===================================================================
+    # TRADE ROUTE CLICK HANDLING & DRAWING OPERATIONS
+    # ===================================================================
+
     # %%% other input-adjacent
+    def add_city_to_empire(self, city, create_label=True):
+        """
+        Unified method to add a city to the empire and scene.
+        This is the only method that should be used to add cities.
+        """
+        if not self.state.check_if_empire():  # Ensure there's an empire
+            return
+        if city not in Empire.cities:  # Add to empire cities list if not already there
+            Empire.cities.append(city)
+            self.mark_unsaved_changes()
+
+        Manager.add_city(city, main_window=self)  # Use graphics manager to create visual representation
+        if create_label:  # Create name label if requested
+            self._create_city_label(city)
+        self.default_cities_manager.update_menu_state()  # Update default cities menu state
+
+        return city
+
+    def _handle_city_drop(self, scene_pos):
+        """Handle dropping a city using the new graphics system."""
+        xy = self._scene_to_image_xy(scene_pos)
+        if xy is None:
+            self.show_message(UIS.NO_BG, UIS.NO_BG_MSG, 1)  # Warning, Ok only
+            return
+        x, y = xy
+
+        if self.selected_list_element:  # Get city type from selected graphics object
+            ctype = self.selected_list_element.data_type
+        else:
+            log.debug("Warning: No selected element found for city drop")
+            return
+
+        if ctype == ed.CityType.OURS:  # OUR city: single instance with move-confirmation
+            has_ours, ours = self.state.has_our_city()
+            if has_ours:
+                message = UIS.MOVE_OUR_CITY_MSG.f(old_x=ours.x, old_y=ours.y, new_x=x, new_y=y)
+                resp = self.show_message(UIS.MOVE_OUR_CITY, message, 3, 1, 2)  # Question, Yes|No, default No
+                if resp == QBTN_NO:
+                    return
+                Manager.remove_city(ours)  # Remove old city and update position
+                ours.x, ours.y = x, y
+                self.mark_unsaved_changes()
+            else:
+                ours = ed.City(name="Our City", x=x, y=y, city_type=ed.CityType.OURS, sells=[])  # Create new "Our City"
+            self.add_city_to_empire(ours, create_label=True)
+
+        else:
+            default_name = ed.CityType(ctype).value  # Other city types: create freely
+            city = ed.City(name=default_name, x=x, y=y, city_type=ctype)
+            if ctype in (ed.CityType.TRADE, ed.CityType.FUTURE_TRADE):
+                city.trade_route = ed.TradeRoute(cost=500, r_type=ed.TradeRouteType.LAND)
+            self.add_city_to_empire(city, create_label=True)
+            Manager.add_trade_route(city, self)
+        # Clear drawing state
+        self.set_drawing_cursor(False)
+        self.is_dragging = False
+        self.deselect_all()
+        return
+
     def _show_context_menu_for_item(self, item, global_pos):
         """Show context menu using the new graphics system."""
         # Try to get graphics object first, including nested objects
@@ -1784,7 +1780,7 @@ class MainWindow(QWI.QMainWindow):
             p = self.bg_item.mapToScene(x_img, y_img)
             color = QGU.QColor(255, 140, 0) if self.trade_is_land else QCO.Qt.cyan
             dot_item = self.scene.addEllipse(p.x() - 2, p.y() - 2, 4, 4, QGU.QPen(QCO.Qt.NoPen), QGU.QBrush(color))
-            dot_item.setZValue(90)
+            dot_item.setZValue(GRO.z_drawing_points)
             self.trade_drawing_point_items.append(dot_item)
 
             # Segment line
@@ -1792,7 +1788,7 @@ class MainWindow(QWI.QMainWindow):
                 x0, y0 = self.trade_drawing_points[-2]
                 p0 = self.bg_item.mapToScene(x0, y0)
                 line_item = self.scene.addLine(p0.x(), p0.y(), p.x(), p.y(), QGU.QPen(color, 2))
-                line_item.setZValue(80)
+                line_item.setZValue(GRO.z_drawing_lines)
                 self.trade_drawing_line_items.append(line_item)
 
             self._create_temp_line("trade")
@@ -1808,7 +1804,7 @@ class MainWindow(QWI.QMainWindow):
             dot_item = self.scene.addEllipse(
                 x_img - 5.0, y_img - 5.0, 10.0, 10.0, QGU.QPen(QCO.Qt.NoPen), QGU.QBrush(QCO.Qt.red)
             )
-            dot_item.setZValue(90)
+            dot_item.setZValue(GRO.z_drawing_points)
             if dot_item:
                 self.edge_point_items.append(dot_item)
 
@@ -1816,7 +1812,7 @@ class MainWindow(QWI.QMainWindow):
             if make_segment and len(self.edge_points_img) >= 2:
                 x0, y0 = self.edge_points_img[-2]
                 line_item = self.scene.addLine(x0, y0, x_img, y_img, QGU.QPen(QCO.Qt.red, 2))
-                line_item.setZValue(80)
+                line_item.setZValue(GRO.z_drawing_lines)
                 if line_item:
                     self.edge_line_items.append(line_item)
 
@@ -1886,7 +1882,7 @@ class MainWindow(QWI.QMainWindow):
                 self.edge_temp_line_item = self.scene.addLine(
                     p_last.x(), p_last.y(), p_last.x(), p_last.y(), QGU.QPen(QCO.Qt.red, 2)
                 )
-                self.edge_temp_line_item.setZValue(100)
+                self.edge_temp_line_item.setZValue(GRO.z_temp_lines)
 
             if cursor_scene_pos is None:
                 self.edge_temp_line_item.setLine(p_last.x(), p_last.y(), p_last.x(), p_last.y())
@@ -1905,16 +1901,293 @@ class MainWindow(QWI.QMainWindow):
             pen = QGU.QPen(QGU.QColor(255, 140, 0) if self.trade_is_land else QCO.Qt.cyan, 2)
             if self.trade_temp_line_item is None:
                 self.trade_temp_line_item = self.scene.addLine(p0.x(), p0.y(), p0.x(), p0.y(), pen)
-                self.trade_temp_line_item.setZValue(100)
+                self.trade_temp_line_item.setZValue(GRO.z_temp_lines)
             else:
                 self.trade_temp_line_item.setLine(p0.x(), p0.y(), p0.x(), p0.y())
         elif drawing_type == "edge":
             # Edge temp line creation is handled in _update_temp_line
             self._update_temp_line("edge")
 
-    # %% Edge drawing
+    # %% Empire data operations
+    def on_new_empire(self):
+        """Handle the New Empire action by showing the image selection dialog."""
+        # Check if we have unsaved changes
+        if not self._check_before_discarding("New Empire"):
+            return
+        dialog = UIE.ImageSelectionDialog(self)
+        if dialog.exec() != QWI.QDialog.Accepted:
+            return
+        selected_image = dialog.get_selected_image()
+        selected_type = dialog.get_selected_image_type()
+        if not selected_image:
+            return
+        # Set up background and validate image
+        pixmap = self._setup_new_empire_background(selected_image, selected_type)
+        if pixmap is None:
+            return
+
+        # Clear current empire and create new one
+        self.clear_empire_data()
+        self.state.new_empire()
+        self._update_empire_reference()
+
+        # Configure empire based on background type
+        self._configure_empire_for_background(selected_image, selected_type, pixmap)
+
+        # Update UI state
+        self.default_cities_manager.populate_menu()
+        self.default_cities_manager.update_menu_state()
+        self.current_file_path = None
+        self.has_unsaved_changes = False
+        self.update_window_title()
+        self.update_ui_state()
+
+    def clear_empire_data(self):
+        """Clear all current empire data for a new empire."""
+        # Clear the empire data
+        log.debug("Clearing empire data and reseting scene.")
+        if self.state.current_empire_object:
+            self.state.clear_empire()
+            self._update_empire_reference()  # Update global reference
+
+        # Clear scene state and graphics
+        self._clear_scene_state()
+
+        # Clear the list widget and re-add template icons
+        self.ui.listWidget.clear()
+        self.add_city_icons_to_list()  # Re-add the template icons
+        log.debug("Cleared empire data and reset scene.")
+        # Update UI state after clearing empire
+        self.update_ui_state()
+
+    def _validate_empire_bounds(self, width, height, empire=None, remove_invalid=False):
+        """
+        Validate that empire elements fit within the given dimensions.
+
+        Args:
+            width: Map width
+            height: Map height
+            empire: Empire object to validate (defaults to global Empire)
+            remove_invalid: If True, remove invalid elements and return count.
+                           If False, return list of invalid element descriptions.
+
+        Returns:
+            If remove_invalid=True: int (count of removed elements)
+            If remove_invalid=False: list[str] (descriptions of invalid elements)
+        """
+        empire = empire or Empire
+        if not empire:
+            return 0 if remove_invalid else []
+
+        invalid_elements = []
+        removed_count = 0
+
+        def is_out_of_bounds(x, y):
+            return not (0 <= x < width and 0 <= y < height)
+
+        # Check cities
+        if empire.cities:
+            cities_to_remove = []
+            for city in empire.cities:
+                if is_out_of_bounds(city.x, city.y):
+                    if remove_invalid:
+                        cities_to_remove.append(city)
+                        log.debug(f"Removing city '{city.name}' at ({city.x}, {city.y}) - outside map bounds")
+                    else:
+                        invalid_elements.append(f"City '{city.name}' at ({city.x}, {city.y})")
+
+            if remove_invalid:
+                for city in cities_to_remove:
+                    empire.cities.remove(city)
+                    removed_count += 1
+
+        # Check border edges
+        if empire.border and empire.border.edges:
+            edges_to_remove = []
+            for i, edge in enumerate(empire.border.edges):
+                if is_out_of_bounds(edge.x, edge.y):
+                    if remove_invalid:
+                        edges_to_remove.append(edge)
+                        log.debug(f"Removing border edge at ({edge.x}, {edge.y}) - outside map bounds")
+                    else:
+                        invalid_elements.append(f"Border edge {i + 1} at ({edge.x}, {edge.y})")
+
+            if remove_invalid:
+                for edge in edges_to_remove:
+                    empire.border.edges.remove(edge)
+                    removed_count += 1
+
+        # Check trade route points
+        if empire.cities:
+            for city in empire.cities:
+                if city.trade_route and city.trade_route.trade_points:
+                    points_to_remove = []
+                    for i, point in enumerate(city.trade_route.trade_points):
+                        if is_out_of_bounds(point.x, point.y):
+                            if remove_invalid:
+                                points_to_remove.append(point)
+                                log.debug(f"Removing trade route point at ({point.x}, {point.y}) - outside map bounds")
+                            else:
+                                invalid_elements.append(
+                                    f"Trade route point {i + 1} for '{city.name}' at ({point.x}, {point.y})"
+                                )
+
+                    if remove_invalid:
+                        for point in points_to_remove:
+                            city.trade_route.trade_points.remove(point)
+                            removed_count += 1
+
+        # Check invasion paths (only in remove mode, as this wasn't in the original report function)
+        if remove_invalid and empire.invasion_paths:
+            for invasion_path in empire.invasion_paths:
+                if invasion_path.battles:
+                    battles_to_remove = []
+                    for battle in invasion_path.battles:
+                        if is_out_of_bounds(battle.x, battle.y):
+                            battles_to_remove.append(battle)
+                            log.debug(f"Removing invasion battle at ({battle.x}, {battle.y}) - outside map bounds")
+
+                    for battle in battles_to_remove:
+                        invasion_path.battles.remove(battle)
+                        removed_count += 1
+
+        # Check distant battle paths (only in remove mode, as this wasn't in the original report function)
+        if remove_invalid and empire.distant_battle_paths:
+            for path in empire.distant_battle_paths:
+                if path.battles:
+                    battles_to_remove = []
+                    for battle in path.battles:
+                        if is_out_of_bounds(battle.x, battle.y):
+                            battles_to_remove.append(battle)
+                            log.debug(f"Removing distant battle at ({battle.x}, {battle.y}) - outside map bounds")
+
+                    for battle in battles_to_remove:
+                        path.battles.remove(battle)
+                        removed_count += 1
+
+        return removed_count if remove_invalid else invalid_elements
+
+    def _prepare_empire_map_info_for_save(self, empire, file_path, img_path: str = "", xml_path: str = ""):
+        """Update empire map_info based on current background before saving.
+
+        If img_path is provided, images are written there (e.g., Augustus 'community/image').
+        Otherwise they go to '<xml_dir>/image'.
+        """
+        if not self.bg_item or self.bg_type == ed.EmpBackgroundTypes.LEGACY:
+            # For legacy backgrounds or no background, keep version 1 format
+            empire.version = 1
+            empire.map_info = None
+            return
+
+        empire.version = 2  # For custom backgrounds, set up map_info for version 2+
+
+        pixmap = self.bg_item.pixmap()
+        if pixmap.isNull():
+            empire.map_info = None
+            return
+
+        # Where the XML will live
+        xml_dir = os.path.dirname(file_path)
+        images_dir = img_path if img_path else os.path.join(xml_dir, "image")
+        if not os.path.exists(images_dir):  # Create images directory if it doesn't exist
+            os.makedirs(images_dir, exist_ok=True)
+
+        # Determine the filename of the source image we're currently using
+        if hasattr(self, "_current_image_path") and self._current_image_path:
+            image_filename = os.path.basename(self._current_image_path)
+            source_path = self._current_image_path
+        else:
+            image_filename = "background.png"
+            source_path = None
+
+        # Target path in the chosen images folder
+        target_path = os.path.join(images_dir, image_filename)
+
+        # Copy the image file if we have a source and target doesn't exist
+        if source_path and os.path.exists(source_path) and not os.path.exists(target_path):
+            try:
+                shutil.copy2(source_path, target_path)
+                log.debug(f"Copied background image to: {target_path}")
+            except Exception as e:
+                log.error(f"Warning: Could not copy image file: {e}")
+
+        # Create or update map_info
+        if empire.map_info is None:
+            empire.map_info = ed.Map()
+
+        # Game engine requirement: just the filename
+        empire.map_info.image = image_filename
+        empire.map_info.width = pixmap.width()
+        empire.map_info.height = pixmap.height()
+        empire.map_info.x_offset = 0
+        empire.map_info.y_offset = 0
+        empire.map_info.coordinates_relative = False
+        empire.map_info.coordinates_x_offset = 0
+        empire.map_info.coordinates_y_offset = 0
+
+        log.debug(f"Updated empire map_info: {image_filename} ({pixmap.width()}x{pixmap.height()})")
+
+    # %% Pixmaps and drawing
+    def pil_to_qpixmap(self, pil_img):
+        if pil_img.mode != "RGBA":
+            pil_img = pil_img.convert("RGBA")
+        w, h = pil_img.size
+        data = pil_img.tobytes("raw", "RGBA")
+        qimg = QGU.QImage(data, w, h, QGU.QImage.Format.Format_RGBA8888)
+        return QGU.QPixmap.fromImage(qimg)
+
+    def add_city_icons_to_list(self):
+        """Populate the list widget with selectable elements using the new graphics system."""
+        self.ui.listWidget.clear()
+        self.selectable_elements.clear()
+
+        for el in self.state.elements:
+            # Skip disabled elements
+            if not el.get("enabled", True):
+                continue
+
+            # Create GRO.SelectableElement from the old format
+            pixmap = self.pil_to_qpixmap(el["pil"])
+
+            # Determine graphics type based on data type
+            if isinstance(el["kind"], ed.CityType):
+                graphics_type = GRO.GraphicsObjectType.CITY
+            elif el["kind"] == PRS.EmpObjTypes.EMPIRE_EDGE:
+                graphics_type = GRO.GraphicsObjectType.BORDER_EDGE
+            else:
+                # For now, skip unknown types
+                continue
+
+            selectable_element = GRO.SelectableElement(
+                name=el["name"],
+                pixmap=pixmap,
+                data_type=el["kind"],
+                graphics_type=graphics_type,
+                enabled=el.get("enabled", True),
+            )
+
+            self.selectable_elements.append(selectable_element)
+
+            # Create list widget item
+            item = QWI.QListWidgetItem(el["name"])
+            item.setIcon(QGU.QIcon(pixmap))
+            item.setSizeHint(QCO.QSize(100, 80))
+            # Store reference to our GRO.SelectableElement
+            item.setData(QCO.Qt.ItemDataRole.UserRole, len(self.selectable_elements) - 1)
+            self.ui.listWidget.addItem(item)
+
+        # Note: Empire edges and trade points are selectable when they're drawn on the scene
+        # but they don't need separate template items in the list widget since they're
+        # created as part of borders and trade routes respectively
+
+        self.ui.listWidget.setIconSize(QCO.QSize(64, 64))
+
+    # %% Vertex Editing
     # ==== small shared helpers ================================================
     # Vertex editing methods are now delegated to graphics objects
+    def clear_vertex_handles(self):
+        """Remove vertex editing handles."""
+        self._clear_selection_overlay("vertex")
 
     def start_vertex_editing(self, handle_item):
         """Start editing a vertex by making it stick to the mouse."""
@@ -2065,7 +2338,7 @@ class MainWindow(QWI.QMainWindow):
             x_last, y_last = pts[-1]
             x_close, y_close = pts[close_to_index]
             close_item = self.scene.addLine(x_last, y_last, x_close, y_close, QGU.QPen(QCO.Qt.red, 2))
-            close_item.setZValue(80)
+            close_item.setZValue(GRO.z_drawing_lines)
             if close_item:
                 self.edge_line_items.append(close_item)
 
@@ -2135,13 +2408,10 @@ class MainWindow(QWI.QMainWindow):
     def _handle_empire_edge_drop(self, scene_pos):
         """Handle dropping an empire edge to start border drawing."""
         # If we already have a border, ask first
-        if self.empire_border and Empire.border:
-            if (
-                not self.show_message(UIS.START_NEW_BORDER, UIS.START_NEW_BORDER_MSG, 3, 1, 2) == QBTN_YES
-            ):  # Question, Yes|No, default No
+        if self.empire_border and Empire.border.non_empty():
+            if not self.show_message(UIS.START_NEW_BORDER, UIS.START_NEW_BORDER_MSG, 3, 1, 2) == QBTN_YES:
                 return
-            # erase model + visuals
-            self.delete_empire_border(force=True)
+            self.delete_empire_border(force=True)  # erase model + visuals
 
         xy = self._scene_to_image_xy(scene_pos)
         if xy is None:
@@ -2166,56 +2436,6 @@ class MainWindow(QWI.QMainWindow):
 
         # Start edge drawing immediately
         self._begin_edge_drawing(x, y)
-
-    # %% Everything else
-
-    # ---------- ROUTER ----------
-
-    def add_city_icons_to_list(self):
-        """Populate the list widget with selectable elements using the new graphics system."""
-        self.ui.listWidget.clear()
-        self.selectable_elements.clear()
-
-        for el in self.state.elements:
-            # Skip disabled elements
-            if not el.get("enabled", True):
-                continue
-
-            # Create GRO.SelectableElement from the old format
-            pixmap = self.pil_to_qpixmap(el["pil"])
-
-            # Determine graphics type based on data type
-            if isinstance(el["kind"], ed.CityType):
-                graphics_type = GRO.GraphicsObjectType.CITY
-            elif el["kind"] == PRS.EmpObjTypes.EMPIRE_EDGE:
-                graphics_type = GRO.GraphicsObjectType.BORDER_EDGE
-            else:
-                # For now, skip unknown types
-                continue
-
-            selectable_element = GRO.SelectableElement(
-                name=el["name"],
-                pixmap=pixmap,
-                data_type=el["kind"],
-                graphics_type=graphics_type,
-                enabled=el.get("enabled", True),
-            )
-
-            self.selectable_elements.append(selectable_element)
-
-            # Create list widget item
-            item = QWI.QListWidgetItem(el["name"])
-            item.setIcon(QGU.QIcon(pixmap))
-            item.setSizeHint(QCO.QSize(100, 80))
-            # Store reference to our GRO.SelectableElement
-            item.setData(QCO.Qt.ItemDataRole.UserRole, len(self.selectable_elements) - 1)
-            self.ui.listWidget.addItem(item)
-
-        # Note: Empire edges and trade points are selectable when they're drawn on the scene
-        # but they don't need separate template items in the list widget since they're
-        # created as part of borders and trade routes respectively
-
-        self.ui.listWidget.setIconSize(QCO.QSize(64, 64))
 
     # %% No-background message
     def show_no_background_message(self):
@@ -2248,7 +2468,162 @@ class MainWindow(QWI.QMainWindow):
         except Exception as e:
             log.error(f"Failed to center no-background message: {e}")
 
-    # %% Other
+    # %% City Labels
+    def update_all_city_labels_from_toggles(self):
+        if Empire is None:
+            return
+        mode = self._get_city_label_mode()
+        for city in Empire.cities:
+            self._apply_city_label_mode(city, mode)
+
+    def _get_city_label_mode(self) -> str:
+        n = self.ui.actionViewOption4.isChecked()
+        t = self.ui.actionViewOption5.isChecked()
+        return "both" if n and t else ("name" if n else ("trade" if t else "off"))
+
+    def _create_city_label(self, city, mode: str | None = None):
+        """Create (or update) a single label for this city and lay it out."""
+        mode = mode or self._get_city_label_mode()
+        key = id(city)
+        if key not in self.city_items:
+            return
+
+        # --- compute texts once ---
+        name_text = city.name or ""
+
+        def _fmt_res(r, omit_amount=False):
+            nm = getattr(r.resource_type, "value", r.resource_type)
+            nm = str(nm).replace("_", " ").title()
+            return f"{nm}[{r.amount}]" if (not omit_amount and r.amount not in (None, 1)) else nm
+
+        sells = ", ".join(_fmt_res(r, omit_amount=(city.city_type == ed.CityType.OURS)) for r in (city.sells or []))
+        buys = ", ".join(_fmt_res(r) for r in (city.buys or []))
+        trade = ("S: " + sells if sells else "") + (" | " if sells and buys else "") + ("B: " + buys if buys else "")
+
+        # --- get or create the label items (idempotent) ---
+        if not hasattr(self, "city_labels"):
+            self.city_labels = {}
+
+        item = self.city_labels.get(key)
+        if item is None:
+            item = QWI.QGraphicsTextItem()
+            font = QGU.QFont("Bookman Old Style", pointSize=8)
+            item.setFont(font)
+            item.setDefaultTextColor(QCO.Qt.GlobalColor.black)
+
+            bg = QWI.QGraphicsRectItem()
+            bg.setBrush(QGU.QBrush(QCO.Qt.GlobalColor.white))
+            bg.setPen(QGU.QPen(QCO.Qt.GlobalColor.black, 1))
+            bg.setZValue(GRO.z_label_0)
+
+            item.bg_rect = bg
+            self.scene.addItem(bg)
+            self.scene.addItem(item)
+            self.city_labels[key] = item
+
+        # cache strings on the item and layout
+        item._name_text = name_text
+        item._trade_text = trade
+        self._apply_city_label_mode(city, mode)
+
+    def _apply_city_label_mode(self, city, mode: str | None = None):
+        """Recompose text (bold name, normal trade) and re-center above icon; avoid overlaps."""
+        mode = mode or self._get_city_label_mode()
+        key = id(city)
+        item = getattr(self, "city_labels", {}).get(key)
+        if not item:
+            return
+
+        name_text, trade_text = item._name_text, item._trade_text
+        fam = "Bookman Old Style"
+
+        # Compose HTML with real paragraphs (Qt-friendly line breaks). Center both lines.
+        parts = []
+        if mode in ("name", "both") and name_text:
+            parts.append(
+                f"<p style=\"font-family:'{fam}'; font-size:8pt; font-weight:600; "
+                f'color:#000; text-align:center; margin:0;">{esc(name_text)}</p>'
+            )
+        if mode in ("trade", "both") and trade_text:
+            parts.append(
+                f"<p style=\"font-family:'{fam}'; font-size:8pt; font-weight:400; "
+                f'color:#000; text-align:center; margin:0;">{esc(trade_text)}</p>'
+            )
+        html = "".join(parts)
+
+        show = (mode != "off") and bool(html)
+        item.setVisible(show)
+        item.bg_rect.setVisible(show)
+        if not show:
+            return
+
+        # Lay out naturally (no fixed text width), then size background with padding.
+        item.setHtml(html)
+        doc = item.document()
+        doc.setDocumentMargin(0)
+
+        r = item.boundingRect()
+        padding = 2
+        item.bg_rect.setRect(r.x() - padding, r.y() - padding, r.width() + 2 * padding, r.height() + 2 * padding)
+
+        # Preferred position (above icon, centered)
+        city_item = self.city_items[key]
+        city_pos, city_rect = city_item.pos(), city_item.boundingRect()
+        x = city_pos.x() + city_rect.width() / 2 - r.width() / 2
+        y = city_pos.y() - r.height() + 6
+
+        # Overlap-avoid: bump up, else down
+        def overlaps(yv: float) -> bool:
+            test = QCO.QRectF(x, yv, r.width(), r.height())
+            for ok, other in self.city_labels.items():
+                if ok == key or not other.isVisible():
+                    continue
+                orr = other.boundingRect()
+                op = other.pos()
+                if test.intersects(QCO.QRectF(op.x(), op.y(), orr.width(), orr.height())):
+                    return True
+            return False
+
+        sr = self.scene.sceneRect()
+        step, margin = 4, 2
+        if overlaps(y):
+            y_up = y
+            while overlaps(y_up) and y_up - step >= sr.top() + margin:
+                y_up -= step
+            if overlaps(y_up):
+                y_dn = y
+                while overlaps(y_dn) and y_dn + r.height() + step <= sr.bottom() - margin:
+                    y_dn += step
+                y = y_dn
+            else:
+                y = y_up
+
+        # Apply
+        item.setPos(x, y)
+        item.setZValue(GRO.z_label_1)
+        item.bg_rect.setPos(x, y)
+
+    def _remove_city_label(self, city):
+        """Remove the name label for a city."""
+        key = id(city)
+        if key in self.city_labels:
+            text_item = self.city_labels[key]
+            try:
+                # Remove background rectangle
+                self.scene.removeItem(text_item.bg_rect)
+                self.scene.removeItem(text_item)
+            except RuntimeError:
+                pass
+            del self.city_labels[key]
+
+    def _remove_all_city_labels(self):
+        for key in self.city_labels:
+            text_item = self.city_labels[key]
+            self.scene.removeItem(text_item.bg_rect)
+            self.scene.removeItem(text_item)
+            del self.city_labels[key]
+
+    # %% Background
 
     def _get_current_map_name(self):
         """Get the current map name based on background type."""
@@ -2339,7 +2714,7 @@ class MainWindow(QWI.QMainWindow):
             self._clear_scene_state()
             self.no_bg_item = None
             self.bg_item = QWI.QGraphicsPixmapItem(pixmap)
-            self.bg_item.setZValue(-1000)  # keep it behind markers
+            self.bg_item.setZValue(GRO.z_background)  # keep it behind markers
             self.scene.addItem(self.bg_item)
             self.scene.setSceneRect(pixmap.rect())
             self.ui.graphicsView.setEnabled(True)
@@ -2350,10 +2725,6 @@ class MainWindow(QWI.QMainWindow):
                 self.bg_type = ed.EmpBackgroundTypes.CUSTOM
                 self.default_cities_manager.update_menu_state()
             self.default_cities_manager.populate_menu()
-
-            # Persist map info (only pass a file path if chosen via dialog)
-            self._update_empire_map_info(image_path=image_path if open_dialog else pil_img.filename, pixmap=pixmap)
-            # Re-render existing empire elements, if any
 
             if Empire:
                 if hasattr(Empire, "cities"):
@@ -2408,469 +2779,70 @@ class MainWindow(QWI.QMainWindow):
 
         except Exception as e:
             self.show_message(UIS.INVALID_IMG, UIS.INVALID_IMG_MSG.f(selected_image=selected_image), 1)
+            log.error(e)
             return None
 
-    def on_new_empire(self):
-        """Handle the New Empire action by showing the image selection dialog."""
-        # Check if we have unsaved changes
-        if not self._check_before_discarding("New Empire"):
-            return
-        dialog = UIE.ImageSelectionDialog(self)
-        if dialog.exec() != QWI.QDialog.Accepted:
-            return
-        selected_image = dialog.get_selected_image()
-        selected_type = dialog.get_selected_image_type()
-        if not selected_image:
-            return
-        # Set up background and validate image
-        pixmap = self._setup_new_empire_background(selected_image, selected_type)
-        if pixmap is None:
-            return
+    def _find_map_image(self, image_path, xml_dir):
+        """Try to find the map image in various locations relative to the XML file."""
+        filename = os.path.basename(image_path)
+        if os.path.isabs(image_path) and os.path.exists(image_path):
+            return image_path
 
-        # Clear current empire and create new one
-        self.clear_empire_data()
-        self.state.new_empire()
-        self._update_empire_reference()
+        # Try relative to XML directory
+        rel_path = os.path.join(xml_dir, image_path)
+        if os.path.exists(rel_path):
+            return rel_path
 
-        # Configure empire based on background type
-        self._configure_empire_for_background(selected_image, selected_type, pixmap)
-
-        # Update UI state
-        self.default_cities_manager.populate_menu()
-        self.default_cities_manager.update_menu_state()
-        self.current_file_path = None
-        self.has_unsaved_changes = False
-        self.update_window_title()
-        self.update_ui_state()
-
-    def clear_empire_data(self):
-        """Clear all current empire data for a new empire."""
-        # Clear the empire data
-        log.debug("Clearing empire data and reseting scene.")
-        if self.state.current_empire_object:
-            self.state.clear_empire()
-            self._update_empire_reference()  # Update global reference
-
-        # Clear scene state and graphics
-        self._clear_scene_state()
-
-        # Clear the list widget and re-add template icons
-        self.ui.listWidget.clear()
-        self.add_city_icons_to_list()  # Re-add the template icons
-        log.debug("Cleared empire data and reset scene.")
-        # Update UI state after clearing empire
-        self.update_ui_state()
-
-    def on_empire_properties(self):
-        """Handle the Empire Properties action by showing the properties dialog."""
-        dialog = UIE.EmpirePropertiesDialog(self)
-        dialog.set_border_spacing(Empire.border.density)
-        dialog.set_show_ireland(Empire.show_ireland)
-        # Load ornaments setting (check if ornaments list is not empty)
-        ornaments_enabled = bool(hasattr(Empire, "ornaments") and Empire.ornaments and len(Empire.ornaments) > 0)
-        dialog.set_ornaments_enabled(ornaments_enabled)
-
-        if dialog.exec() == QWI.QDialog.Accepted:
-            # Get the values from the dialog
-            border_spacing = dialog.get_border_spacing()
-            show_ireland = dialog.get_show_ireland()
-            ornaments_enabled = dialog.get_ornaments_enabled()
-
-            # Ensure empire has a border object for border spacing
-            if Empire.border is None:  # Create a new Border object
-                Empire.border = ed.Border(density=border_spacing)
-            else:  # Update existing border object
-                Empire.border.density = border_spacing
-            Empire.show_ireland = show_ireland
-
-            if ornaments_enabled:  # If ornaments is empty and we're enabling, add a placeholder
-                if not Empire.ornaments:
-                    Empire.ornaments = [1]  # Add a default ornament value
-            else:  # Clear ornaments if disabled
-                Empire.ornaments = []
-            # Update UI to reflect changes if needed
-            self.update_ui_state()
-            if Manager.border_object:
-                Manager.border_object.render_border()
-
-    def on_default_empire_map_selected(self):
-        if "The_empire" in self.state.images:
-            empire_image = self.state.images["The_empire"]
-            if isinstance(empire_image, list):
-                empire_image = empire_image[0]
-
-            self.set_background_image(empire_image)
-            self.bg_type = ed.EmpBackgroundTypes.LEGACY
-            self.default_cities_manager.update_menu_state()
+        if getattr(sys, "frozen", False):
+            base_path = sys._MEIPASS
         else:
-            self.show_message(UIS.MISSING_MAP, UIS.MISSING_MAP_MSG, 1)
+            base_path = os.path.dirname(os.path.abspath(__file__))
 
-    def pil_to_qpixmap(self, pil_img):
-        if pil_img.mode != "RGBA":
-            pil_img = pil_img.convert("RGBA")
-        w, h = pil_img.size
-        data = pil_img.tobytes("raw", "RGBA")
-        qimg = QGU.QImage(data, w, h, QGU.QImage.Format.Format_RGBA8888)
-        return QGU.QPixmap.fromImage(qimg)
+        maps_path = os.path.join(base_path, "augustus_assets", "Areldir_maps", filename)
+        if os.path.exists(maps_path):
+            return maps_path
+        # Try in images subdirectory
+        images_path = os.path.join(xml_dir, "images", image_path)
+        if os.path.exists(images_path):
+            return images_path
 
-    # -------------------------------------------------------
-    # New "city" drop handler (generalized), keeps old name too
-    # -------------------------------------------------------
-    def add_city_to_empire(self, city, create_label=True):
-        """
-        Unified method to add a city to the empire and scene.
-        This is the only method that should be used to add cities.
-        """
-        if not self.state.check_if_empire():  # Ensure there's an empire
-            return
-        if city not in Empire.cities:  # Add to empire cities list if not already there
-            Empire.cities.append(city)
-            self.mark_unsaved_changes()
+        # Try just the filename in XML directory
 
-        Manager.add_city(city, main_window=self)  # Use graphics manager to create visual representation
-        if create_label:  # Create name label if requested
-            self._create_city_label(city)
-        self.default_cities_manager.update_menu_state()  # Update default cities menu state
+        filename_path = os.path.join(xml_dir, filename)
+        if os.path.exists(filename_path):
+            return filename_path
 
-        return city
+        # Try filename in images subdirectory
+        filename_images_path = os.path.join(xml_dir, "images", filename)
+        if os.path.exists(filename_images_path):
+            return filename_images_path
 
-    def _handle_city_drop(self, scene_pos):
-        """Handle dropping a city using the new graphics system."""
-        xy = self._scene_to_image_xy(scene_pos)
-        if xy is None:
-            self.show_message(UIS.NO_BG, UIS.NO_BG_MSG, 1)  # Warning, Ok only
-            return
-        x, y = xy
+        return None
 
-        if self.selected_list_element:  # Get city type from selected graphics object
-            ctype = self.selected_list_element.data_type
-        else:
-            log.debug("Warning: No selected element found for city drop")
-            return
+    def _get_background_type_from_image_path(self, image_path):
+        """Get the EmpBackgroundTypes enum value for a given image path."""
+        if not image_path:
+            return ed.EmpBackgroundTypes.CUSTOM
 
-        if ctype == ed.CityType.OURS:  # OUR city: single instance with move-confirmation
-            has_ours, ours = self.state.has_our_city()
-            if has_ours:
-                message = UIS.MOVE_OUR_CITY_MSG.f(old_x=ours.x, old_y=ours.y, new_x=x, new_y=y)
-                resp = self.show_message(UIS.MOVE_OUR_CITY, message, 3, 1, 2)  # Question, Yes|No, default No
-                if resp == QBTN_NO:
-                    return
-                Manager.remove_city(ours)  # Remove old city and update position
-                ours.x, ours.y = x, y
-                self.mark_unsaved_changes()
-            else:
-                ours = ed.City(name="Our City", x=x, y=y, city_type=ed.CityType.OURS, sells=[])  # Create new "Our City"
-            self.add_city_to_empire(ours, create_label=True)
+        filename = os.path.basename(image_path)
 
-        else:
-            default_name = ed.CityType(ctype).value  # Other city types: create freely
-            city = ed.City(name=default_name, x=x, y=y, city_type=ctype)
-            if ctype in (ed.CityType.TRADE, ed.CityType.FUTURE_TRADE):
-                city.trade_route = ed.TradeRoute(cost=500, r_type=ed.TradeRouteType.LAND)
-            self.add_city_to_empire(city, create_label=True)
-            Manager.add_trade_route(city, self)
-        # Clear drawing state
-        self.set_drawing_cursor(False)
-        self.is_dragging = False
-        self.deselect_all()
-        return
+        default_map_types = {
+            "Orbis_Terrarum_Empire_Map.png": ed.EmpBackgroundTypes.BIG_MAP,
+            "Occidentalis_Empire_Map.png": ed.EmpBackgroundTypes.NORTH_MAP,
+            "Orientalis_Empire_Map.png": ed.EmpBackgroundTypes.SOUTH_MAP,
+        }
 
-    # -------------------------------------------------------
-    # City Name Label Management
-    # -------------------------------------------------------
+        # Check filename first
+        if filename in default_map_types:
+            return default_map_types[filename]
 
-    def _get_city_label_mode(self) -> str:
-        n = self.ui.actionViewOption4.isChecked()
-        t = self.ui.actionViewOption5.isChecked()
-        return "both" if n and t else ("name" if n else ("trade" if t else "off"))
+        # Check if the path contains the characteristic folder structure
+        normalized_path = image_path.replace("\\", "/")
+        for default_filename, bg_type in default_map_types.items():
+            if f"augustus_assets/Areldir_maps/{default_filename}" in normalized_path:
+                return bg_type
 
-    def _create_city_label(self, city, mode: str | None = None):
-        """Create (or update) a single label for this city and lay it out."""
-        mode = mode or self._get_city_label_mode()
-        key = id(city)
-        if key not in self.city_items:
-            return
-
-        # --- compute texts once ---
-        name_text = city.name or ""
-
-        def _fmt_res(r, omit_amount=False):
-            nm = getattr(r.resource_type, "value", r.resource_type)
-            nm = str(nm).replace("_", " ").title()
-            return f"{nm}[{r.amount}]" if (not omit_amount and r.amount not in (None, 1)) else nm
-
-        sells = ", ".join(_fmt_res(r, omit_amount=(city.city_type == ed.CityType.OURS)) for r in (city.sells or []))
-        buys = ", ".join(_fmt_res(r) for r in (city.buys or []))
-        trade = ("S: " + sells if sells else "") + (" | " if sells and buys else "") + ("B: " + buys if buys else "")
-
-        # --- get or create the label items (idempotent) ---
-        if not hasattr(self, "city_labels"):
-            self.city_labels = {}
-
-        item = self.city_labels.get(key)
-        if item is None:
-            item = QWI.QGraphicsTextItem()
-            font = QGU.QFont("Bookman Old Style", pointSize=8)
-            item.setFont(font)
-            item.setDefaultTextColor(QCO.Qt.GlobalColor.black)
-
-            bg = QWI.QGraphicsRectItem()
-            bg.setBrush(QGU.QBrush(QCO.Qt.GlobalColor.white))
-            bg.setPen(QGU.QPen(QCO.Qt.GlobalColor.black, 1))
-            bg.setZValue(100)
-
-            item.bg_rect = bg
-            self.scene.addItem(bg)
-            self.scene.addItem(item)
-            self.city_labels[key] = item
-
-        # cache strings on the item and layout
-        item._name_text = name_text
-        item._trade_text = trade
-        self._apply_city_label_mode(city, mode)
-
-    def _apply_city_label_mode(self, city, mode: str | None = None):
-        """Recompose text (bold name, normal trade) and re-center above icon; avoid overlaps."""
-        mode = mode or self._get_city_label_mode()
-        key = id(city)
-        item = getattr(self, "city_labels", {}).get(key)
-        if not item:
-            return
-
-        name_text, trade_text = item._name_text, item._trade_text
-        fam = "Bookman Old Style"
-
-        # Compose HTML with real paragraphs (Qt-friendly line breaks). Center both lines.
-        parts = []
-        if mode in ("name", "both") and name_text:
-            parts.append(
-                f"<p style=\"font-family:'{fam}'; font-size:8pt; font-weight:600; "
-                f'color:#000; text-align:center; margin:0;">{esc(name_text)}</p>'
-            )
-        if mode in ("trade", "both") and trade_text:
-            parts.append(
-                f"<p style=\"font-family:'{fam}'; font-size:8pt; font-weight:400; "
-                f'color:#000; text-align:center; margin:0;">{esc(trade_text)}</p>'
-            )
-        html = "".join(parts)
-
-        show = (mode != "off") and bool(html)
-        item.setVisible(show)
-        item.bg_rect.setVisible(show)
-        if not show:
-            return
-
-        # Lay out naturally (no fixed text width), then size background with padding.
-        item.setHtml(html)
-        doc = item.document()
-        doc.setDocumentMargin(0)
-
-        r = item.boundingRect()
-        padding = 2
-        item.bg_rect.setRect(r.x() - padding, r.y() - padding, r.width() + 2 * padding, r.height() + 2 * padding)
-
-        # Preferred position (above icon, centered)
-        city_item = self.city_items[key]
-        city_pos, city_rect = city_item.pos(), city_item.boundingRect()
-        x = city_pos.x() + city_rect.width() / 2 - r.width() / 2
-        y = city_pos.y() - r.height() + 6
-
-        # Overlap-avoid: bump up, else down
-        def overlaps(yv: float) -> bool:
-            test = QCO.QRectF(x, yv, r.width(), r.height())
-            for ok, other in self.city_labels.items():
-                if ok == key or not other.isVisible():
-                    continue
-                orr = other.boundingRect()
-                op = other.pos()
-                if test.intersects(QCO.QRectF(op.x(), op.y(), orr.width(), orr.height())):
-                    return True
-            return False
-
-        sr = self.scene.sceneRect()
-        step, margin = 4, 2
-        if overlaps(y):
-            y_up = y
-            while overlaps(y_up) and y_up - step >= sr.top() + margin:
-                y_up -= step
-            if overlaps(y_up):
-                y_dn = y
-                while overlaps(y_dn) and y_dn + r.height() + step <= sr.bottom() - margin:
-                    y_dn += step
-                y = y_dn
-            else:
-                y = y_up
-
-        # Apply
-        item.setPos(x, y)
-        item.setZValue(101)
-        item.bg_rect.setPos(x, y)
-
-    def _remove_city_label(self, city):
-        """Remove the name label for a city."""
-        key = id(city)
-        if key in self.city_labels:
-            text_item = self.city_labels[key]
-            try:
-                # Remove background rectangle
-                self.scene.removeItem(text_item.bg_rect)
-                self.scene.removeItem(text_item)
-            except RuntimeError:
-                pass
-            del self.city_labels[key]
-
-    def _remove_all_city_labels(self):
-        for key in self.city_labels:
-            text_item = self.city_labels[key]
-            self.scene.removeItem(text_item.bg_rect)
-            self.scene.removeItem(text_item)
-            del self.city_labels[key]
-
-    # -------------------------------------------------------
-    # View Options Toggle Methods
-    # -------------------------------------------------------
-
-    def toggle_cities_visibility(self):
-        """Toggle visibility of all city markers using the new graphics system."""
-        if Empire is None:
-            return
-        visible = self.ui.actionViewOption1.isChecked()
-        Manager.set_cities_visibility(visible)
-        log.debug(f"Cities visibility: {'ON' if visible else 'OFF'}")
-
-    def toggle_trade_routes_visibility(self):
-        """Toggle visibility of all trade routes using graphics manager."""
-        if Empire is None:
-            return
-        visible = self.ui.actionViewOption2.isChecked()
-        Manager.set_trade_routes_visibility(visible)
-        log.debug(f"Trade routes visibility: {'ON' if visible else 'OFF'}")
-
-    def toggle_border_visibility(self):
-        """Toggle visibility of empire border."""
-        if Empire is None:
-            return
-        visible = self.ui.actionViewOption3.isChecked()
-        Manager.set_border_visibility(visible)
-
-        if hasattr(self, "edge_temp_line_item") and self.edge_temp_line_item:
-            try:
-                self.edge_temp_line_item.setVisible(visible)
-            except RuntimeError:
-                pass
-
-        log.debug(f"Empire border visibility: {'ON' if visible else 'OFF'}")
-
-    def update_all_city_labels_from_toggles(self):
-        if Empire is None:
-            return
-        mode = self._get_city_label_mode()
-        for city in Empire.cities:
-            self._apply_city_label_mode(city, mode)
-
-    def align_trade_points(self, alignment_radius: int) -> int:
-        """
-        Snap nearby trade points (pixel units) to a shared integer coordinate.
-        Returns:
-            int: number of points whose coordinates changed.
-        """
-        if Empire is None:
-            return 0
-        # Collect a global list of all trade-point objects
-        all_points = []
-        for city in Empire.cities:
-            tr = city.trade_route
-            if tr and tr.trade_points is not None:
-                all_points.extend(tr.trade_points)
-
-        if not all_points or alignment_radius <= 0:
-            return 0
-
-        r2 = alignment_radius * alignment_radius
-        moved = 0
-
-        # Representatives (int coords)
-        reps: list[tuple[int, int]] = []
-
-        for p in all_points:
-            # Ensure integer coords locally (we'll also coerce p if needed)
-            px = int(p.x)
-            py = int(p.y)
-
-            snapped = False
-            for rx, ry in reps:
-                dx = px - rx
-                dy = py - ry
-                if dx * dx + dy * dy <= r2:
-                    # Snap to representative if different
-                    if p.x != rx or p.y != ry:
-                        p.x = rx
-                        p.y = ry
-                        moved += 1
-                    snapped = True
-                    break
-
-            if not snapped:
-                # New representative; also coerce point to integer coords if needed
-                reps.append((px, py))
-                if p.x != px or p.y != py:
-                    p.x = px
-                    p.y = py
-                    moved += 1
-        return moved
-
-    def refresh_map(self, snap=False):
-        """Refresh and re-render all map elements (F5)."""
-        log.debug("Refreshing map...")
-
-        if not self.state.check_if_empire():
-            log.debug("No empire to refresh")
-            return
-
-        # Clear all visual elements except background
-        if self.scene and self.bg_item:
-            # Remove all items except background
-
-            for item in list(self.scene.items()):
-                if item != self.bg_item:
-                    self.scene.removeItem(item)
-
-        if self.state.snap_enabled or snap:
-            moved = self.align_trade_points(self.state.snap_distance)
-
-        # Clear internal state
-        self.city_items.clear()
-        self.city_labels.clear()
-        self._clear_scene_state()
-
-        # 1. Re-render cities
-
-        for city in Empire.cities:
-            Manager.add_city(city, main_window=self)
-            # Always create name labels (visibility will be controlled by toggle)
-            self._create_city_label(city)
-
-            # Re-render trade routes
-            if city.trade_route is not None:
-                Manager.add_trade_route(city, self)
-
-        # 2. Re-render empire border if enabled
-        if Empire.border:
-            self.empire_border = True
-            Manager.add_border(Empire.border, self)
-
-        # 3. Update visibility states based on current toggle settings
-        self.update_all_city_labels_from_toggles()
-        self.toggle_cities_visibility()
-        self.toggle_trade_routes_visibility()
-        self.toggle_border_visibility()
-
-        # 4. Repopulate Default Cities menu
-        self.default_cities_manager.populate_menu()
-        if moved > 0:
-            self.has_unsaved_changes = True
-            self.show_message(UIS.TR_ALIGNED, UIS.TR_ALIGNED_MSG.f(moved=moved), 0)
-        log.debug("Map refresh completed")
+        return ed.EmpBackgroundTypes.CUSTOM
 
 
 if __name__ == "__main__":

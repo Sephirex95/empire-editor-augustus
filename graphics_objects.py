@@ -37,6 +37,41 @@ class GraphicsObjectType(Enum):
     DISTANT_BATTLE_PATH = auto()
 
 
+# --------------------------- Z-Values constants --------------
+# Lowest layer - backgrounds
+z_background = -1000
+
+# Trade route elements
+z_trade_point_hit = 7
+
+# Dotted lines and basic elements
+z_dotted_lines = 12
+
+# Polychain visual elements
+z_polychain_visual = 75
+z_polychain_hit = 76
+z_polychain_hidden_edges = 77
+z_polychain_hidden_vertices = 78
+
+# Drawing operations and temporary lines
+z_drawing_lines = 80
+z_drawing_points = 90
+z_temp_lines = 100
+
+# Selection overlays
+z_selection_overlay_base = 120
+z_selection_overlay_edge = 121
+z_selection_handles = 130
+
+# Editing handles
+z_editable_handles = 140
+
+# Cities (highest priority)
+z_city_icon = 250
+# Labels and UI overlays
+z_label_0 = 260
+z_label_1 = 261
+
 # --------------------------- Base ----------------------------
 
 
@@ -102,7 +137,7 @@ class GraphicsObjectBase(ABC):
                 it.scene().removeItem(it)
         self.scene_items.clear()
 
-    def create_editable_handles(self, pts: List[Tuple[float, float]], z=140.0, size=8.0):
+    def create_editable_handles(self, pts: List[Tuple[float, float]], z=z_editable_handles, size=8.0):
         """Create editable vertex handles."""
 
         def style(i):
@@ -149,7 +184,9 @@ class GraphicsObjectBase(ABC):
             out.append(it)
         return out
 
-    def dotted(self, pts: List[Tuple[float, float]], pen: QPen = None, z=12.0, group=None) -> List[QGraphicsLineItem]:
+    def dotted(
+        self, pts: List[Tuple[float, float]], pen: QPen = None, z=z_dotted_lines, group=None
+    ) -> List[QGraphicsLineItem]:
         if len(pts) < 2:
             return []
         pen = pen or QPen(Qt.black, 1)
@@ -160,7 +197,7 @@ class GraphicsObjectBase(ABC):
         ]
 
     def handles(
-        self, pts: List[Tuple[float, float]], z=130.0, size=6.0, style=None, tag=None, editable=False
+        self, pts: List[Tuple[float, float]], z=z_selection_handles, size=6.0, style=None, tag=None, editable=False
     ) -> List[QGraphicsItem]:
         if not pts:
             return []
@@ -257,7 +294,7 @@ class GraphicsObjectBase(ABC):
             ax, ay = bx, by
 
     # --- pixmap wrapper, unchanged API, compact
-    def stamp_pixmaps_polyline(self, pts, pix, spacing, z=75, group=None, dedup=None, merge=None):
+    def stamp_pixmaps_polyline(self, pts, pix, spacing, z=z_polychain_visual, group=None, dedup=None, merge=None):
         if not pts or pix.isNull():
             return []
         items, seen = [], (dedup if dedup is not None else [])
@@ -398,7 +435,7 @@ class PolychainGraphicsObject(GraphicsObjectBase):
             it.setData(Qt.ItemDataRole.UserRole + 1, i)  # Edge index
             it.setData(Qt.ItemDataRole.UserRole + 2, self)  # Reference to this object
 
-        self.hit_items = self.hits(edges, self.visual_group, z=76, w=12, sel=True, meta=_meta)
+        self.hit_items = self.hits(edges, self.visual_group, z=z_polychain_hit, w=12, sel=True, meta=_meta)
 
     def _get_edge_list(self, pts: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
         """Get list of points for edge hit areas."""
@@ -432,7 +469,7 @@ class PolychainGraphicsObject(GraphicsObjectBase):
                 [(x0, y0), (x1, y1)],
                 pixmap,
                 self.config.density,
-                z=75,
+                z=z_polychain_visual,
                 group=self.visual_group,
                 dedup=dedup_list,
                 merge=merge_distance,
@@ -448,7 +485,7 @@ class PolychainGraphicsObject(GraphicsObjectBase):
             if i < len(hidden) and hidden[i]:
                 x0, y0 = pts[i]
                 x1, y1 = pts[i + 1]
-                line = self.line(x0, y0, x1, y1, pen, z=77, group=self.visual_group)
+                line = self.line(x0, y0, x1, y1, pen, z=z_polychain_hidden_edges, group=self.visual_group)
                 self.stamped_items.append(line)
 
         # Handle closing edge for closed polychains
@@ -457,7 +494,7 @@ class PolychainGraphicsObject(GraphicsObjectBase):
             if last_idx < len(hidden) and hidden[last_idx]:
                 x0, y0 = pts[-1]
                 x1, y1 = pts[0]
-                line = self.line(x0, y0, x1, y1, pen, z=77, group=self.visual_group)
+                line = self.line(x0, y0, x1, y1, pen, z=z_polychain_hidden_edges, group=self.visual_group)
                 self.stamped_items.append(line)
 
     def _mark_hidden_vertices(self, pts: List[Tuple[int, int]], hidden: List[bool]):
@@ -477,7 +514,12 @@ class PolychainGraphicsObject(GraphicsObjectBase):
 
             if is_hidden_vertex:
                 dot = self.place_dot(
-                    x, y, r=3, brush=QBrush(self.config.hidden_vertex_color), z=78, group=self.visual_group
+                    x,
+                    y,
+                    r=3,
+                    brush=QBrush(self.config.hidden_vertex_color),
+                    z=z_polychain_hidden_vertices,
+                    group=self.visual_group,
                 )
                 if dot:
                     self.stamped_items.append(dot)
@@ -497,7 +539,7 @@ class PolychainGraphicsObject(GraphicsObjectBase):
         edges = self._get_edge_list(pts)
         pen = QPen(self.config.object_selection_color, self.config.object_selection_width)
         pen.setStyle(Qt.DotLine)
-        self.selection_overlay_items += self.dotted(edges, pen, z=120)
+        self.selection_overlay_items += self.dotted(edges, pen, z=z_selection_overlay_base)
 
         # Edge-level selection (much thicker and more prominent line for selected edge)
         if self.selected_edge_index is not None and self.selected_edge_index < len(pts) - 1:
@@ -508,14 +550,14 @@ class PolychainGraphicsObject(GraphicsObjectBase):
             # Create a very prominent highlight - thick solid line in bright color
             edge_pen = QPen(self.config.edge_selection_color, self.config.edge_selection_width)  # Much thicker
             edge_pen.setStyle(Qt.SolidLine)  # Solid line for maximum visibility
-            edge_line = self.line(x0, y0, x1, y1, edge_pen, z=121)
+            edge_line = self.line(x0, y0, x1, y1, edge_pen, z=z_selection_overlay_edge)
             self.selection_overlay_items.append(edge_line)
 
             # # Add a second outline for even more visibility
             # outline_color = Qt.white if self.config.edge_selection_color == Qt.black else Qt.black
             # outline_pen = QPen(outline_color, self.config.edge_selection_width + 7)
             # outline_pen.setStyle(Qt.SolidLine)
-            # outline_line = self.line(x0, y0, x1, y1, outline_pen, z=120)  # Behind the main line
+            # outline_line = self.line(x0, y0, x1, y1, outline_pen, z=z_selection_overlay_base)  # Behind the main line
             # self.selection_overlay_items.append(outline_line)
 
         # Vertex handles (editable when object is selected)
@@ -525,7 +567,7 @@ class PolychainGraphicsObject(GraphicsObjectBase):
             is_hidden = i < len(hidden) and hidden[i]
             return (QPen(Qt.red, 1), QBrush(Qt.yellow)) if is_hidden else (QPen(Qt.blue, 1), QBrush(Qt.blue))
 
-        self.selection_overlay_items += self.handles(pts, z=130, size=8, style=style, editable=True)
+        self.selection_overlay_items += self.handles(pts, z=z_selection_handles, size=8, style=style, editable=True)
 
     def _clear_selection_overlay(self):
         """Clear selection overlay."""
@@ -640,7 +682,7 @@ class CityGraphicsObject(GraphicsObjectBase):
         self.city_item.setTransformationMode(Qt.TransformationMode.FastTransformation)
         self.pixmap.setDevicePixelRatio(1.0)
 
-        self.city_item.setZValue(250)
+        self.city_item.setZValue(z_city_icon)
         self.city_item.setOffset(0, 0)
         self.city_item.setPos(scene_pt)
         self.city_item.setFlag(QGraphicsPixmapItem.ItemIsSelectable, True)
@@ -715,7 +757,7 @@ class CityGraphicsObject(GraphicsObjectBase):
 
     def _plot_trade_route(self):
         if self.main_window:
-            self.main_window.draw_trade_route_from_context(self.data_object)
+            self.main_window._draw_trade_route_from_context(self.data_object)
 
     def _edit(self):
         if self.main_window:
@@ -908,7 +950,9 @@ class TradeRouteGraphicsObject(PolychainGraphicsObject):
 
         for i, tp in enumerate(self.data_object.trade_route.trade_points):
             # Create a small clickable circle for each trade point
-            hit_item = self.place_dot(tp.x, tp.y, r=8, brush=QBrush(Qt.transparent), z=7, group=self.visual_group)
+            hit_item = self.place_dot(
+                tp.x, tp.y, r=8, brush=QBrush(Qt.transparent), z=z_trade_point_hit, group=self.visual_group
+            )
             if hit_item:
                 hit_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
                 hit_item.setData(Qt.ItemDataRole.UserRole, "TRADE_POINT")

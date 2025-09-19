@@ -7,7 +7,7 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 import re
 
-EDITOR_VERSION: float = 0.294  # bump here
+EDITOR_VERSION: float = 0.295  # bump here
 EDITOR_SIGNATURE = "sephirex95"  # legacy header marker
 
 
@@ -147,6 +147,9 @@ class Border:
 
     density: Optional[int] = 50  # defaults to 50 per docs
     edges: List[Edge] = field(default_factory=list)
+
+    def non_empty(self) -> bool:
+        return bool(len(self.edges) > 0)
 
     def add_vertex_after(self, edge: Edge):
         """Add a new vertex halfway between the given edge and the next edge in the border."""
@@ -304,7 +307,7 @@ class Empire:
         self.editor_version: float = get_editor_version()
 
         self.ornaments = list(ornaments) if ornaments else []
-        self.border = border
+        self.border = border if border else Border()
         self.cities = list(cities) if cities else []
         self.invasion_paths = list(invasion_paths) if invasion_paths else []
         self.distant_battle_paths = list(distant_battle_paths) if distant_battle_paths else []
