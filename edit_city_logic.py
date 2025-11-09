@@ -9,7 +9,7 @@ Created on Sun Aug 10 22:02:04 2025
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import *
 
-from edit_city import Ui_Dialog
+from edit_city import Ui_Dialog, CityIconSelector
 from empire_data import *
 
 import sys
@@ -292,8 +292,12 @@ class DynamicList:
 class CityPropertiesDialog(QDialog):
     def __init__(self, city: City, parent=None):
         super().__init__(parent)
+        # get icons list from parents state:
+        city_icons_dict = parent.state.get_city_icons_dict()
+
         self.ui = Ui_Dialog()
-        self.ui.setupUi(self)
+        # list of icons here
+        self.ui.setupUi(self, current_city_icon=city.icon.value, dict_of_icons=city_icons_dict)
 
         # Cache references to the relevant UI bits
         # Exact bindings (from your retranslateUi)
@@ -305,6 +309,7 @@ class CityPropertiesDialog(QDialog):
         self._button_box = self.ui.buttonBox
         self._trade_group = self.ui.groupBox_2  # "Trade Route"
         self._lists_group = self.ui.groupBox  # "Trade" group (Sells/Buys)
+        self._current_city_icon = self.ui.pushButtonCityIcon
         self.city = city
         # atm no X/Y widgets in this dialog
         self._x_spin = None
@@ -398,6 +403,13 @@ class CityPropertiesDialog(QDialog):
         ours = c.city_type == CityType.OURS
         c.sells = self.sells.to_resources(ours)
         c.buys = self.buys.to_resources(False)
+        
+        # city icon - get from the icon selector if it was changed
+        if hasattr(self.ui, 'current_city_icon') and self.ui.current_city_icon:
+            c.icon = CityIconType(self.ui.current_city_icon)
+        else:
+            c.icon = CityIconType.default_icon(c.city_type)
+        
         return c
 
     def draw_trade_route(self):

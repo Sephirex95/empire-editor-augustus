@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import empire_data as ed
 from sg_reader_light import SgFileReader
 from enum import Enum, auto
+from PIL import Image
 
 
 class EmpObjTypes(Enum):
@@ -35,7 +36,6 @@ class ProgramState:
         self.city_icons_map = {}
         self.init_failed = False
         self.current_empire_object = None
-
         # paths + feature fields
         self.c3_main_path = ""
         self.augustus_user_path = ""
@@ -254,6 +254,9 @@ class ProgramState:
         QMessageBox.warning(None, "Missing Expected Items", missing_msg, QMessageBox.StandardButton.Ok)
         return False
 
+    def get_city_icons_dict(self):
+        return self.city_icons_map
+
     def load_images(self):
         if self.c3_main_path:
             c3_sg_path = os.path.join(self.c3_main_path, "C3.sg2")
@@ -267,17 +270,6 @@ class ProgramState:
             def crop5x5(img):
                 return img.crop((0, 0, 5, 5))  # (left, top, right, bottom), bottom is exclusive
 
-            # augustus assets used via layering:
-            bits = self.images["empire_bits"]
-            self.images["sea_dot"] = crop5x5(bits[102])
-            self.images["land_dot"] = crop5x5(bits[94])
-            # Store flag images separately
-            self.images["our_flag"] = bits[2]
-            self.images["trade_flag"] = bits[9]
-            self.images["roman_flag"] = bits[16]
-            self.images["distant_flag"] = bits[23]
-
-            # Helper function to overlay flag on city icon
             def overlay_flag_on_city(city_pil, flag_pil, x_offset=0, y_offset=0):
                 """Overlay a flag image on the top-right corner of a city icon."""
                 # Create a copy of the city image to avoid modifying the original
@@ -293,6 +285,47 @@ class ProgramState:
 
                 return result
 
+            # Get the augustus_assets path
+            if getattr(sys, "frozen", False):
+                # Running as PyInstaller executable
+                app_root = os.path.dirname(sys.executable)
+            else:
+                # Running in normal Python environment
+                app_root = os.path.dirname(os.path.abspath(__file__))
+
+            ui_assets_path = os.path.join(app_root, "augustus_assets", "Graphics", "UI")
+
+            # augustus assets used via layering:
+            bits = self.images["empire_bits"]
+            self.images["sea_dot"] = crop5x5(bits[102])
+            self.images["land_dot"] = crop5x5(bits[94])
+
+            # Load Empire_Icon images from augustus assets
+            self.images["construction"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Construction_01.png"))
+            self.images["dis_town"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Distant_01.png"))
+            self.images["dis_village"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Distant_02.png"))
+            self.images["purple_flag"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Flag_01.png"))
+            self.images["res_food"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Resource_01.png"))
+            self.images["res_goods"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Resource_02.png"))
+            self.images["tr_town"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Roman_01.png"))
+            self.images["ro_town"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Roman_02.png"))
+            self.images["tr_village"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Roman_03.png"))
+            self.images["ro_village"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Roman_04.png"))
+            self.images["ro_capital"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Roman_05.png"))
+            self.images["tr_sea"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Trade_01.png"))
+            self.images["tr_land"] = Image.open(os.path.join(ui_assets_path, "Empire_Icon_Trade_02.png"))
+
+            # Store flag images separately
+            self.images["our_flag"] = bits[2]
+            self.images["capital_flag"] = overlay_flag_on_city(
+                self.images["our_flag"], self.images["purple_flag"], 0, 0
+            )
+            self.images["trade_flag"] = bits[9]
+            self.images["roman_flag"] = bits[16]
+            self.images["distant_flag"] = bits[23]
+
+            # Helper function to overlay flag on city icon
+
             # Create city icons with flags overlaid
             our_city_base = bits[0]
             roman_city_base = bits[7]
@@ -303,7 +336,25 @@ class ProgramState:
             roman_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["roman_flag"], 22, 5)
             trade_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["trade_flag"], 22, 5)
             distant_city_with_flag = overlay_flag_on_city(distant_city_base, self.images["distant_flag"], 12, 5)
-
+            capital_with_flag = overlay_flag_on_city(self.images["ro_capital"], self.images["capital_flag"], 17, 5)
+            self.city_icons_map = {
+                "construction": self.images["construction"],
+                "dis_town": self.images["dis_town"],
+                "dis_village": self.images["dis_village"],
+                "res_food": self.images["res_food"],
+                "res_goods": self.images["res_goods"],
+                "tr_town": self.images["tr_town"],
+                "ro_town": self.images["ro_town"],
+                "tr_village": self.images["tr_village"],
+                "ro_village": self.images["ro_village"],
+                "ro_capital": capital_with_flag,
+                "tr_sea": self.images["tr_sea"],
+                "tr_land": self.images["tr_land"],
+                "our_city": our_city_with_flag,
+                "ro_city": roman_city_with_flag,
+                "tr_city": trade_city_with_flag,
+                "dis_city": distant_city_with_flag,
+            }
             # images from vanilla files
             self.elements = [
                 {"name": "Our City", "pil": our_city_with_flag, "kind": ed.CityType.OURS, "enabled": True},

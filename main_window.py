@@ -574,7 +574,7 @@ class MainWindow(QWI.QMainWindow):
     def move_city(self, city_obj):
         """Enter drag mode to move an existing city."""
         self.moving_city = city_obj
-        pm = Manager.get_city_pixmap(city_obj.city_type, self)
+        pm = Manager.get_city_pixmap(city_obj, self)
 
         # Cache the pixmap for cursor
         self.drag_pixmap = pm
@@ -650,7 +650,7 @@ class MainWindow(QWI.QMainWindow):
             key = id(city_obj)
             if key in self.city_items:
                 it = self.city_items[key]
-                pm = Manager.get_city_pixmap(city_obj.city_type, self)
+                pm = Manager.get_city_pixmap(city_obj, self)
                 it.setPixmap(pm)
                 it.setData(QCO.Qt.ItemDataRole.UserRole, city_obj.city_type)
         self.refresh_map()
@@ -1171,7 +1171,7 @@ class MainWindow(QWI.QMainWindow):
             # Check if clicked on "Our City" to finish
             for city in self.state.current_empire_object.cities:
                 if city.city_type == ed.CityType.OURS:
-                    city_pixmap = Manager.get_city_pixmap(city.city_type, self)
+                    city_pixmap = Manager.get_city_pixmap(city, self)
                     city_half_width = city_pixmap.width() // 2
                     city_half_height = city_pixmap.height() // 2
                     # Check if click is within city bounds (center-based coordinates)
@@ -1272,7 +1272,7 @@ class MainWindow(QWI.QMainWindow):
         last_point = trade_route.trade_points[-1]
 
         # Get city bounds (coordinates are center-based)
-        city_pixmap = Manager.get_city_pixmap(city.city_type, self)
+        city_pixmap = Manager.get_city_pixmap(city, self)
         city_half_width = city_pixmap.width() // 2
         city_half_height = city_pixmap.height() // 2
 

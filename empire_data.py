@@ -122,6 +122,39 @@ class ResourceType(str, Enum):
     # TROOPS = "troops"       # not storable unless in barracks lmao
 
 
+class CityIconType(str, Enum):
+    ICON_CONSTRUCTION = "construction"
+    ICON_DISTANT_TOWN = "dis_town"
+    ICON_DISTANT_VILLAGE = "dis_village"
+    ICON_RESOURCE_FOOD = "res_food"
+    ICON_RESOURCE_GOODS = "res_goods"
+    ICON_TRADE_TOWN = "tr_town"
+    ICON_ROMAN_TOWN = "ro_town"
+    ICON_TRADE_VILLAGE = "tr_village"
+    ICON_ROMAN_VILLAGE = "ro_village"
+    ICON_ROMAN_CAPITAL = "ro_capital"
+    ICON_TRADE_SEA = "tr_sea"
+    ICON_TRADE_LAND = "tr_land"
+    ICON_OUR_CITY = "our_city"
+    ICON_TRADE_CITY = "tr_city"
+    ICON_ROMAN_CITY = "ro_city"
+    ICON_DISTANT_CITY = "dis_city"
+
+    def default_icon(cityType: CityType) -> "CityIconType":
+        if cityType == CityType.OURS:
+            return CityIconType.ICON_OUR_CITY
+        elif cityType == CityType.ROMAN:
+            return CityIconType.ICON_ROMAN_CITY
+        elif cityType == CityType.DISTANT:
+            return CityIconType.ICON_DISTANT_CITY
+        elif cityType == CityType.TRADE:
+            return CityIconType.ICON_TRADE_CITY
+        elif cityType == CityType.FUTURE_TRADE:
+            return CityIconType.ICON_CONSTRUCTION
+        else:
+            return CityIconType.ICON_ROMAN_CITY
+
+
 # ---------- Value objects ----------
 
 
@@ -216,10 +249,13 @@ class City:
     trade_route: Optional[TradeRoute] = None  # <- replaces cost/type/points on City
     buys: List[Resource] = field(default_factory=list)
     sells: List[Resource] = field(default_factory=list)
+    icon: Optional[CityIconType] = None
 
     def __post_init__(self):
         if self.city_type == CityType.OURS and not self.sells:
             pass
+        if self.icon is None:
+            self.icon = CityIconType.default_icon(self.city_type)  # <-- choose your default icon type
 
 
 @dataclass
@@ -372,6 +408,7 @@ class Empire:
             c_el.set("x", str(c.x))
             c_el.set("y", str(c.y))
             c_el.set("type", CityType(c.city_type).value)
+            c_el.set("icon", CityIconType(c.icon).value) if c.icon else None
             if c.city_type in (CityType.OURS, CityType.TRADE, CityType.FUTURE_TRADE):
                 if c.trade_route is not None:
                     tr = c.trade_route
@@ -556,6 +593,7 @@ class Empire:
                 x = int(c_el.get("x"))
                 y = int(c_el.get("y"))
                 ctype = c_el.get("type") or CityType.TRADE
+                icontype = c_el.get("icon") or CityIconType.default_icon(CityType(ctype))
                 # trade route bits
                 trade_route = None
                 tr_cost = c_el.get("trade_route_cost")
@@ -598,7 +636,9 @@ class Empire:
                         # omit amount for home city accepted; None is fine
                         sells.append(Resource(resource_type=rtype, amount=int(amount) if amount is not None else None))
 
-                city = City(name=name, x=x, y=y, city_type=ctype, buys=buys, sells=sells, trade_route=trade_route)
+                city = City(
+                    name=name, x=x, y=y, city_type=ctype, icon=icontype, buys=buys, sells=sells, trade_route=trade_route
+                )
                 cities.append(city)
 
         # invasion paths
@@ -650,6 +690,7 @@ __all__ = [
     "OrnamentType",
     "CityType",
     "ResourceType",
+    "CityIconType",
     "TradeRouteType",
     "DistantPathType",
     "Ornament",
