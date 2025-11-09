@@ -337,24 +337,44 @@ class ProgramState:
             trade_city_with_flag = overlay_flag_on_city(roman_city_base, self.images["trade_flag"], 22, 5)
             distant_city_with_flag = overlay_flag_on_city(distant_city_base, self.images["distant_flag"], 12, 5)
             capital_with_flag = overlay_flag_on_city(self.images["ro_capital"], self.images["capital_flag"], 17, 5)
+
+            construction_with_flag = overlay_flag_on_city(self.images["construction"], self.images["roman_flag"], 2, 6)
+
+            dis_town_with_flag = overlay_flag_on_city(self.images["dis_town"], self.images["distant_flag"], 11, 5)
+            dis_village_with_flag = overlay_flag_on_city(self.images["dis_village"], self.images["distant_flag"], 11, 5)
+
+            res_food_with_flag = overlay_flag_on_city(self.images["res_food"], self.images["trade_flag"], 1, 6)
+            res_goods_with_flag = overlay_flag_on_city(self.images["res_goods"], self.images["trade_flag"], 1, 6)
+
+            tr_sea_with_flag = overlay_flag_on_city(self.images["tr_sea"], self.images["trade_flag"], 19, 6)
+            tr_land_with_flag = overlay_flag_on_city(self.images["tr_land"], self.images["trade_flag"], 19, 6)
+
+            # Towns & villages get flags too now
+            tr_town_with_flag = overlay_flag_on_city(self.images["tr_town"], self.images["trade_flag"], 17, 6)
+            ro_town_with_flag = overlay_flag_on_city(self.images["ro_town"], self.images["roman_flag"], 17, 6)
+
+            tr_village_with_flag = overlay_flag_on_city(self.images["tr_village"], self.images["trade_flag"], 17, 6)
+            ro_village_with_flag = overlay_flag_on_city(self.images["ro_village"], self.images["roman_flag"], 17, 6)
+
             self.city_icons_map = {
-                "construction": self.images["construction"],
-                "dis_town": self.images["dis_town"],
-                "dis_village": self.images["dis_village"],
-                "res_food": self.images["res_food"],
-                "res_goods": self.images["res_goods"],
-                "tr_town": self.images["tr_town"],
-                "ro_town": self.images["ro_town"],
-                "tr_village": self.images["tr_village"],
-                "ro_village": self.images["ro_village"],
+                "construction": construction_with_flag,
+                "dis_town": dis_town_with_flag,
+                "dis_village": dis_village_with_flag,
+                "res_food": res_food_with_flag,
+                "res_goods": res_goods_with_flag,
+                "tr_town": tr_town_with_flag,
+                "ro_town": ro_town_with_flag,
+                "tr_village": tr_village_with_flag,
+                "ro_village": ro_village_with_flag,
                 "ro_capital": capital_with_flag,
-                "tr_sea": self.images["tr_sea"],
-                "tr_land": self.images["tr_land"],
+                "tr_sea": tr_sea_with_flag,
+                "tr_land": tr_land_with_flag,
                 "our_city": our_city_with_flag,
                 "ro_city": roman_city_with_flag,
                 "tr_city": trade_city_with_flag,
                 "dis_city": distant_city_with_flag,
             }
+
             # images from vanilla files
             self.elements = [
                 {"name": "Our City", "pil": our_city_with_flag, "kind": ed.CityType.OURS, "enabled": True},

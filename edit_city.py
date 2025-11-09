@@ -105,7 +105,7 @@ class Ui_Dialog(object):
         # CITY ICON BUTTON NEXT TO INPUTS
         self.pushButtonCityIcon = QPushButton(Dialog)
         self.pushButtonCityIcon.setObjectName("pushButtonCityIcon")
-        self.pushButtonCityIcon.setGeometry(QRect(270, 45, 60, 60))  # <--- HERE
+        self.pushButtonCityIcon.setGeometry(QRect(270, 35, 60, 60))  # <--- HERE
         self.pushButtonCityIcon.clicked.connect(self.openIconSelector)
 
         # SECOND GROUP BOX
