@@ -1236,20 +1236,22 @@ class GraphicsObjectManager:
         self.selected_object: Optional[GraphicsObjectBase] = None
 
     @staticmethod
-    def get_city_pixmap(city_type: ed.CityType, main_window) -> QPixmap:
+    def get_city_pixmap(city: ed.City, main_window) -> QPixmap:
         """Get pixmap for a city type from main window state."""
         if not main_window or not hasattr(main_window, "state"):
             return QPixmap()
-        for el in main_window.state.elements:
-            if el["kind"] == city_type:
-                return main_window.pil_to_qpixmap(el["pil"])
-        return QPixmap()
+        if isinstance(city.icon, ed.CityIconType):
+            icon_key = city.icon.value
+        else:
+            icon_key = city.icon
+        pil_image = main_window.state.city_icons_map[icon_key]
+        return main_window.pil_to_qpixmap(pil_image)
 
     # cities
     def add_city(self, city: ed.City, pixmap: QPixmap = None, main_window=None) -> CityGraphicsObject:
         # Get pixmap if not provided
         if pixmap is None or pixmap.isNull():
-            pixmap = self.get_city_pixmap(city.city_type, main_window)
+            pixmap = self.get_city_pixmap(city, main_window)
 
         obj = CityGraphicsObject(city, pixmap, main_window)
         self.city_objects[id(city)] = obj
