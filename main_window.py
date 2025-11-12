@@ -928,7 +928,7 @@ class MainWindow(QWI.QMainWindow):
                 if city.trade_route is not None:
                     # Use graphics manager to handle trade route rendering
                     graphics_obj = Manager.add_trade_route(city, self)
-            graphics_obj.render_trade_route()
+                    graphics_obj.render_trade_route()
 
         # Render empire border if it exists
         if Empire and Empire.border:
@@ -2713,6 +2713,14 @@ class MainWindow(QWI.QMainWindow):
             self.bg_item = None
             self._clear_scene_state()
             self.no_bg_item = None
+            
+            # Remove all items from scene to ensure clean slate
+            for item in list(self.scene.items()):
+                try:
+                    self.scene.removeItem(item)
+                except:
+                    pass
+            
             self.bg_item = QWI.QGraphicsPixmapItem(pixmap)
             self.bg_item.setZValue(GRO.z_background)  # keep it behind markers
             self.scene.addItem(self.bg_item)

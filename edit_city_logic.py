@@ -403,13 +403,13 @@ class CityPropertiesDialog(QDialog):
         ours = c.city_type == CityType.OURS
         c.sells = self.sells.to_resources(ours)
         c.buys = self.buys.to_resources(False)
-        
+
         # city icon - get from the icon selector if it was changed
-        if hasattr(self.ui, 'current_city_icon') and self.ui.current_city_icon:
+        if hasattr(self.ui, "current_city_icon") and self.ui.current_city_icon:
             c.icon = CityIconType(self.ui.current_city_icon)
         else:
             c.icon = CityIconType.default_icon(c.city_type)
-        
+
         return c
 
     def draw_trade_route(self):

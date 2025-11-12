@@ -7,7 +7,7 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 import re
 
-EDITOR_VERSION: float = 0.3  # bump here
+EDITOR_VERSION: float = 0.31  # bump here
 EDITOR_SIGNATURE = "sephirex95"  # legacy header marker
 
 
