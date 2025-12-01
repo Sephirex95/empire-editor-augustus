@@ -293,7 +293,12 @@ class ProgramState:
                 # Running in normal Python environment
                 app_root = os.path.dirname(os.path.abspath(__file__))
 
-            ui_assets_path = os.path.join(app_root, "augustus_assets", "Graphics", "UI")
+            if getattr(sys, "frozen", False):
+                # Running as PyInstaller executable
+                ui_assets_path = os.path.join(app_root, "_internal", "augustus_assets", "Graphics", "UI")
+            else:
+                # Running in normal Python environment
+                ui_assets_path = os.path.join(app_root, "augustus_assets", "Graphics", "UI")
 
             # augustus assets used via layering:
             bits = self.images["empire_bits"]
