@@ -297,7 +297,7 @@ class CityPropertiesDialog(QDialog):
 
         self.ui = Ui_Dialog()
         # list of icons here
-        self.ui.setupUi(self, current_city_icon=city.icon.value, dict_of_icons=city_icons_dict)
+        self.ui.setupUi(self, current_city_icon=city.icon, dict_of_icons=city_icons_dict)
 
         # Cache references to the relevant UI bits
         # Exact bindings (from your retranslateUi)
