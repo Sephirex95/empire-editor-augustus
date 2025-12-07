@@ -289,15 +289,10 @@ class ProgramState:
             if getattr(sys, "frozen", False):
                 # Running as PyInstaller executable
                 app_root = os.path.dirname(sys.executable)
-            else:
-                # Running in normal Python environment
-                app_root = os.path.dirname(os.path.abspath(__file__))
-
-            if getattr(sys, "frozen", False):
-                # Running as PyInstaller executable
                 ui_assets_path = os.path.join(app_root, "_internal", "augustus_assets", "Graphics", "UI")
             else:
                 # Running in normal Python environment
+                app_root = os.path.dirname(os.path.abspath(__file__))
                 ui_assets_path = os.path.join(app_root, "augustus_assets", "Graphics", "UI")
 
             # augustus assets used via layering:
