@@ -140,6 +140,8 @@ class CityIconType(str, Enum):
     ICON_ROMAN_CITY = "ro_city"
     ICON_DISTANT_CITY = "dis_city"
 
+    DEFAULT_FUTURE_TRADE_AFTER_ICON = "tr_city"
+    
     def default_icon(cityType: CityType) -> "CityIconType":
         if cityType == CityType.OURS:
             return CityIconType.ICON_OUR_CITY
@@ -250,12 +252,15 @@ class City:
     buys: List[Resource] = field(default_factory=list)
     sells: List[Resource] = field(default_factory=list)
     icon: Optional[CityIconType] = None
+    future_trade_icon_after: Optional[CityIconType] = None
 
     def __post_init__(self):
         if self.city_type == CityType.OURS and not self.sells:
             pass
         if self.icon is None:
             self.icon = CityIconType.default_icon(self.city_type)  # <-- choose your default icon type
+        if self.future_trade_icon_after is None:
+            self.future_trade_icon_after = CityIconType.DEFAULT_FUTURE_TRADE_AFTER_ICON
 
 
 @dataclass
@@ -409,6 +414,8 @@ class Empire:
             c_el.set("y", str(c.y))
             c_el.set("type", CityType(c.city_type).value)
             c_el.set("icon", CityIconType(c.icon).value) if c.icon else None
+            if c.city_type == CityType.FUTURE_TRADE:
+                c_el.set("icon_after", CityIconType(c.future_trade_icon_after).value) if c.future_trade_icon_after else None
             if c.city_type in (CityType.OURS, CityType.TRADE, CityType.FUTURE_TRADE):
                 if c.trade_route is not None:
                     tr = c.trade_route
@@ -593,7 +600,12 @@ class Empire:
                 x = int(c_el.get("x"))
                 y = int(c_el.get("y"))
                 ctype = c_el.get("type") or CityType.TRADE
-                icontype = c_el.get("icon") or CityIconType.default_icon(CityType(ctype))
+                icontype = c_el.get("icon_before") or c_el.get("icon") or CityIconType.default_icon(CityType(ctype))
+                future_trade_icon_type = CityIconType.DEFAULT_FUTURE_TRADE_AFTER_ICON
+                print(type(ctype), ctype)
+                if ctype == CityType.FUTURE_TRADE.value:
+                    print("found future trade")
+                    future_trade_icon_type = c_el.get("icon_after")
                 # trade route bits
                 trade_route = None
                 tr_cost = c_el.get("trade_route_cost")
@@ -637,7 +649,7 @@ class Empire:
                         sells.append(Resource(resource_type=rtype, amount=int(amount) if amount is not None else None))
 
                 city = City(
-                    name=name, x=x, y=y, city_type=ctype, icon=icontype, buys=buys, sells=sells, trade_route=trade_route
+                    name=name, x=x, y=y, city_type=ctype, icon=icontype, future_trade_icon_after=future_trade_icon_type, buys=buys, sells=sells, trade_route=trade_route
                 )
                 cities.append(city)
 

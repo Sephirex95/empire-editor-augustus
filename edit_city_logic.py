@@ -297,7 +297,7 @@ class CityPropertiesDialog(QDialog):
 
         self.ui = Ui_Dialog()
         # list of icons here
-        self.ui.setupUi(self, current_city_icon=city.icon, dict_of_icons=city_icons_dict)
+        self.ui.setupUi(self, current_city_icon=city.icon, current_future_trade_icon=city.future_trade_icon_after, dict_of_icons=city_icons_dict)
 
         # Cache references to the relevant UI bits
         # Exact bindings (from your retranslateUi)
@@ -409,6 +409,11 @@ class CityPropertiesDialog(QDialog):
             c.icon = CityIconType(self.ui.current_city_icon)
         else:
             c.icon = CityIconType.default_icon(c.city_type)
+        
+        if hasattr(self.ui, "current_future_trade_icon") and self.ui.current_future_trade_icon:
+            c.future_trade_icon_after = CityIconType(self.ui.current_future_trade_icon)
+        else:
+            c.future_trade_icon_after = CityIconType.DEFAULT_FUTURE_TRADE_AFTER_ICON
 
         return c
 
@@ -429,10 +434,12 @@ class CityPropertiesDialog(QDialog):
         # - TRADE -> show them
         show_trade_route = ctype in [CityType.TRADE, CityType.FUTURE_TRADE]
         show_trade_lists = ctype in [CityType.TRADE, CityType.OURS, CityType.FUTURE_TRADE]
+        show_future_trade_icon = ctype is CityType.FUTURE_TRADE
         # Group box: one call hides/shows all its children
         if self._trade_group is not None:
             self.ui.groupBox.setVisible(show_trade_lists)
             self.ui.groupBox_2.setVisible(show_trade_route)
+            self.ui.pushButtonFutureTradeIcon.setVisible(show_future_trade_icon)
             if ctype == CityType.OURS:
                 self.ui.label_6.setVisible(False)
                 self.ui.listWidgetBuys.setVisible(False)

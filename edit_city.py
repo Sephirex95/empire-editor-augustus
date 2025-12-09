@@ -28,13 +28,14 @@ def pil_to_qimage(pil_image):
 
 
 class Ui_Dialog(object):
-    def setupUi(self, Dialog, current_city_icon, dict_of_icons=None):
+    def setupUi(self, Dialog, current_city_icon, current_future_trade_icon, dict_of_icons=None):
         if not Dialog.objectName():
             Dialog.setObjectName("Dialog")
         Dialog.setEnabled(True)
 
         self.icons_dict = dict_of_icons
         self.current_city_icon = current_city_icon
+        self.current_future_trade_icon = current_future_trade_icon
         Dialog.resize(683, 487)
         Dialog.setMinimumSize(QSize(683, 487))
         font = QFont()
@@ -96,18 +97,24 @@ class Ui_Dialog(object):
         self.comboBox = QComboBox(self.formLayoutWidget)
         for _ in range(5):
             self.comboBox.addItem("")
-        self.formLayout.setWidget(1, QFormLayout.FieldRole, self.comboBox)
-
+        self.formLayout.setWidget(1, QFormLayout.FieldRole, self.comboBox)        
+        
         # SHRINK INPUTS SO BUTTON CAN FIT NEXT TO THEM
-        self.lineEdit.setFixedWidth(180)
-        self.comboBox.setFixedWidth(180)
+        self.lineEdit.setFixedWidth(150)
+        self.comboBox.setFixedWidth(150)
 
         # CITY ICON BUTTON NEXT TO INPUTS
         self.pushButtonCityIcon = QPushButton(Dialog)
         self.pushButtonCityIcon.setObjectName("pushButtonCityIcon")
-        self.pushButtonCityIcon.setGeometry(QRect(270, 35, 60, 60))  # <--- HERE
-        self.pushButtonCityIcon.clicked.connect(self.openIconSelector)
-
+        self.pushButtonCityIcon.setGeometry(QRect(215, 35, 60, 60))  # <--- HERE
+        self.pushButtonCityIcon.clicked.connect(lambda: self.openIconSelector(0))
+        
+        # FUTURE TRADE CITY ICON AFTER CONVERSION RIGHT OF CITY ICON
+        self.pushButtonFutureTradeIcon = QPushButton(Dialog)
+        self.pushButtonFutureTradeIcon.setObjectName("pushButtonFutureTradeIcon")
+        self.pushButtonFutureTradeIcon.setGeometry(QRect(285, 35, 60, 60))  # <--- HERE
+        self.pushButtonFutureTradeIcon.clicked.connect(lambda: self.openIconSelector(1))
+        
         # SECOND GROUP BOX
         self.groupBox_2 = QGroupBox(self.formLayoutWidget)
         self.groupBox_2.setMinimumSize(QSize(0, 160))
@@ -149,7 +156,7 @@ class Ui_Dialog(object):
         QMetaObject.connectSlotsByName(Dialog)
 
     # setupUi
-    def openIconSelector(self):
+    def openIconSelector(self, icon_type):
         # Get icons from the dictionary passed during setupUi
         if self.icons_dict is None:
             QMessageBox.warning(None, "Error", "No icons dictionary provided")
@@ -172,11 +179,18 @@ class Ui_Dialog(object):
         dlg = CityIconSelector(icon_pixmaps, parent=None)
 
         if dlg.exec():
-            # store the selection (now it's a key from the dictionary)
-            self.current_city_icon = dlg.selected_icon
-            # update the button icon using the pixmap
-            self.pushButtonCityIcon.setIcon(QIcon(icon_pixmaps[self.current_city_icon]))
-            self.pushButtonCityIcon.setIconSize(QSize(48, 48))
+            if icon_type == 0:
+                # store the selection (now it's a key from the dictionary)
+                self.current_city_icon = dlg.selected_icon
+                # update the button icon using the pixmap
+                self.pushButtonCityIcon.setIcon(QIcon(icon_pixmaps[self.current_city_icon]))
+                self.pushButtonCityIcon.setIconSize(QSize(48, 48))
+            else:
+                # store the selection (now it's a key from the dictionary)
+                self.current_future_trade_icon = dlg.selected_icon
+                # update the button icon using the pixmap
+                self.pushButtonFutureTradeIcon.setIcon(QIcon(icon_pixmaps[self.current_future_trade_icon]))
+                self.pushButtonFutureTradeIcon.setIconSize(QSize(48, 48))
 
     def retranslateUi(self, Dialog):
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", "City Properties", None))
@@ -202,9 +216,17 @@ class Ui_Dialog(object):
         pil_img = self.icons_dict[self.current_city_icon]
         qimg = pil_to_qimage(pil_img)
         pixmap = QPixmap.fromImage(qimg).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        future_trade_pil_img = self.icons_dict[self.current_future_trade_icon]
+        future_trade_qimg = pil_to_qimage(future_trade_pil_img)
+        future_trade_pixmap = QPixmap.fromImage(future_trade_qimg).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        
         self.pushButtonCityIcon.setIcon(QIcon(pixmap))
         self.pushButtonCityIcon.setIconSize(QSize(48, 48))  # <--- this is what was missing
         self.pushButtonCityIcon.setFixedSize(60, 60)  # ensure button can display it
+        self.pushButtonFutureTradeIcon.setIcon(QIcon(future_trade_pixmap))
+        self.pushButtonFutureTradeIcon.setIconSize(QSize(48, 48))
+        self.pushButtonFutureTradeIcon.setFixedSize(60, 60)  # ensure button can display it
 
         self.pushButton.setText(QCoreApplication.translate("Dialog", "Plot Trade Route", None))
 
